@@ -111,4 +111,6 @@ SWAGGER_CONTACT_EMAIL=titovgrisha04@gmail.com
 
 MAX_REQUESTS_TTL_MS=5000
 MAX_REQUESTS_LIMIT=10
+
+COMPILER_SECRET=test-compiler-secret
 ```

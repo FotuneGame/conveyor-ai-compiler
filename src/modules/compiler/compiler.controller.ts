@@ -1,5 +1,7 @@
-import { Controller, Get, Post } from "@nestjs/common";
+import { Controller, Get, Post, UseGuards } from "@nestjs/common";
+import { AuthGuard } from "src/common/guards/auth.guard";
 
+@UseGuards(AuthGuard)
 @Controller()
 export class CompilerController {
     constructor(){}

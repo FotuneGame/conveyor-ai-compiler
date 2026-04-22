@@ -10,6 +10,7 @@ import { CoreModule } from './modules/core.module';
 import appConfig from './config/app.config';
 import loggerConfig from './config/logger.config';
 import swaggerConfig from './config/swagger.config';
+import passportConfig from './config/passport.config';
 import httpConfig from './config/http.config';
 import hashConfig from "./config/hash.config";
 import throttlerConfig from "./config/throttler.config";
@@ -30,6 +31,7 @@ import { LoggerInterceptor } from './common/interceptors/log.interceptor';
       load: [
         appConfig,
         throttlerConfig,
+        passportConfig,
         loggerConfig,
         swaggerConfig,
         httpConfig,
