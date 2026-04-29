@@ -17,4 +17,10 @@ export class CompilerController {
         console.log("compilate");
         return "compiled";
     }
+
+    @Post("/stop")
+    async stop() {
+        console.log("stop");
+        return "stopped";
+    }
 }
