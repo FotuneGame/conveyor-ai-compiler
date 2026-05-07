@@ -1,4 +1,4 @@
-export type ProtocolTypeBase = {
+export type ProtocolTypeType = {
   id: number;
   name: string;
 }
@@ -26,7 +26,7 @@ export type WSType = {
 export type ProtocolType = {
   id: number;
   name: string;
-  type: ProtocolTypeBase;
+  type: ProtocolTypeType;
   http: HTTPType | null;
   ws: WSType | null;
 }

@@ -9,7 +9,12 @@ import type {
   LLMType,
   CircleType,
 } from './node-types.types';
-import type { DataTypeType, NodeTypeBase } from './data-type.types';
+import type { DataType } from './data-type.types';
+
+export type NodeTypeType = {
+  id: number;
+  name: string;
+}
 
 export type NodeType = {
   id: number;
@@ -19,9 +24,9 @@ export type NodeType = {
   position: number[];
   createdAt: Date;
   updatedAt: Date;
-  enterDataType: DataTypeType;
-  exitDataType: DataTypeType;
-  type: NodeTypeBase;
+  enterDataType: DataType;
+  exitDataType: DataType;
+  type: NodeTypeType;
   condition?: ConditionType | null;
   memory?: MemoryType | null;
   circle?: CircleType | null;

@@ -1,4 +1,4 @@
-export type * from './compile-request.types';
+export type * from './request.types';
 export type * from './compiler.types';
 export type * from './user.types';
 export type * from './model.types';
