@@ -3,6 +3,7 @@ import { registerAs } from '@nestjs/config';
 export interface CoreConfig {
   compiler: {
     tempDir: string,
+    envPath: string,
   },
   gitlab: {
     baseUrl: string,
@@ -20,6 +21,7 @@ export default registerAs(
   (): CoreConfig => ({
     compiler: {
       tempDir: process.env.COMPILER_TEMP_DIR || '/tmp/compiler-projects',
+      envPath: process.env.ENV_PATH || './example.env',
     },
     gitlab: {
       baseUrl: process.env.GITLAB_BASE_URL || 'https://gitlab.com',

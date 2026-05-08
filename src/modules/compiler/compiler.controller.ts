@@ -1,18 +1,23 @@
 import { Controller, Get, Post, Body, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "src/common/guards/auth.guard";
 import { ProjectService } from "../project/project.service";
+import { EnvConfigService } from "../env-config/env-config.service";
 import type { Request } from "express";
 import type { CompileRequestType, StopRequestType, NodeType } from "./types";
 import type { CompileResultType } from "../project/types";
+import type { EnvConfigType } from "../env-config/types";
 
 @UseGuards(AuthGuard)
 @Controller()
 export class CompilerController {
-  constructor(private readonly projectService: ProjectService) {}
+  constructor(
+    private readonly projectService: ProjectService,
+    private readonly envConfigService: EnvConfigService
+  ) {}
 
   @Get("/default")
-  async getDefaultEnv(): Promise<string> {
-    return "default env";
+  async getDefaultEnv(): Promise<EnvConfigType> {
+    return await this.envConfigService.getDefaultEnvConfig();
   }
 
   @Post("/compilate")
