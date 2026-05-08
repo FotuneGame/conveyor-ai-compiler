@@ -36,7 +36,7 @@ import { LoggerInterceptor } from './common/interceptors/log.interceptor';
         swaggerConfig,
         httpConfig,
         hashConfig,
-        coreConfig
+        coreConfig,
       ],
       cache: true,
     }),
