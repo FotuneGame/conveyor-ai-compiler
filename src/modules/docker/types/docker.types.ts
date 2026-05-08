@@ -28,14 +28,14 @@ export type DockerNetworkType = {
   scope: string;
 };
 
-export type BuildImageDto = {
+export type BuildImageType = {
   path: string;
   tag: string;
   dockerfileName?: string;
   buildArgs?: Record<string, string>;
 };
 
-export type RunContainerDto = {
+export type RunContainerType = {
   image: string;
   name: string;
   env?: Record<string, string>;
@@ -45,17 +45,17 @@ export type RunContainerDto = {
   restartPolicy?: string;
 };
 
-export type StopContainerDto = {
+export type StopContainerType = {
   containerId: string;
   timeout?: number;
 };
 
-export type RemoveContainerDto = {
+export type RemoveContainerType = {
   containerId: string;
   force?: boolean;
 };
 
-export type RemoveImageDto = {
+export type RemoveImageType = {
   imageId: string;
   force?: boolean;
 };

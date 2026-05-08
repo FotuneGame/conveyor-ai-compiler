@@ -1,15 +1,7 @@
 import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import { WinstonService } from "src/shared/logger/winston.service";
 import { TerminalService } from "../terminal/terminal.service";
-import type {
-  DockerImageType,
-  DockerContainerType,
-  BuildImageDto,
-  RunContainerDto,
-  StopContainerDto,
-  RemoveContainerDto,
-  RemoveImageDto,
-} from "./types";
+import type {DockerImageType, DockerContainerType, BuildImageType, RunContainerType, StopContainerType, RemoveContainerType, RemoveImageType } from "./types";
 
 @Injectable()
 export class DockerService {
@@ -18,7 +10,7 @@ export class DockerService {
     private readonly terminalService: TerminalService,
   ) {}
 
-  async buildImage(data: BuildImageDto): Promise<{ success: boolean; imageId: string }> {
+  async buildImage(data: BuildImageType): Promise<{ success: boolean; imageId: string }> {
     const { path, tag, dockerfileName = "Dockerfile", buildArgs = {} } = data;
 
     this.winstonService.debug(`Building Docker image: ${tag} from ${path}`);
@@ -48,7 +40,7 @@ export class DockerService {
     }
   }
 
-  async runContainer(data: RunContainerDto): Promise<{ success: boolean; containerId: string }> {
+  async runContainer(data: RunContainerType): Promise<{ success: boolean; containerId: string }> {
     const { image, name, env = {}, ports = {}, volumes = {}, network, restartPolicy } = data;
 
     this.winstonService.debug(`Running Docker container: ${name}`);
@@ -96,7 +88,7 @@ export class DockerService {
     }
   }
 
-  async stopContainer(data: StopContainerDto): Promise<boolean> {
+  async stopContainer(data: StopContainerType): Promise<boolean> {
     const { containerId, timeout } = data;
 
     this.winstonService.debug(`Stopping Docker container: ${containerId}`);
@@ -119,7 +111,7 @@ export class DockerService {
     }
   }
 
-  async removeContainer(data: RemoveContainerDto): Promise<boolean> {
+  async removeContainer(data: RemoveContainerType): Promise<boolean> {
     const { containerId, force = false } = data;
 
     this.winstonService.debug(`Removing Docker container: ${containerId}`);
@@ -143,7 +135,7 @@ export class DockerService {
     }
   }
 
-  async removeImage(data: RemoveImageDto): Promise<boolean> {
+  async removeImage(data: RemoveImageType): Promise<boolean> {
     const { imageId, force = false } = data;
 
     this.winstonService.debug(`Removing Docker image: ${imageId}`);
@@ -227,7 +219,7 @@ export class DockerService {
       this.winstonService.error(`Failed to get Docker images: ${error}`);
       return [];
     }
-  }
+  }  
 
   async getContainerLogs(containerId: string, tail: number = 100): Promise<string> {
     this.winstonService.debug(`Getting logs for container: ${containerId}`);

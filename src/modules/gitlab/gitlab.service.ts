@@ -3,13 +3,7 @@ import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
 import { WinstonService } from "src/shared/logger/winston.service";
-import type {
-  GitLabProjectType,
-  GitLabCommitType,
-  GitLabPipelineType,
-  CreateGitLabProjectDto,
-  GitLabConfigType,
-} from "./types";
+import type { GitLabProjectType, GitLabCommitType, GitLabPipelineType, CreateGitLabProjectType, GitLabConfigType} from "./types";
 
 @Injectable()
 export class GitLabService {
@@ -36,7 +30,7 @@ export class GitLabService {
     };
   }
 
-  async createProject(data: CreateGitLabProjectDto): Promise<GitLabProjectType> {
+  async createProject(data: CreateGitLabProjectType): Promise<GitLabProjectType> {
     this.winstonService.debug(`Creating GitLab project: ${data.name}`);
 
     try {
@@ -153,6 +147,8 @@ export class GitLabService {
     }
   }
 
+
+
   getProjectHttpUrl(projectId: number): string {
     return `${this.baseUrl}/api/v4/projects/${projectId}/repository/archive.zip`;
   }
@@ -166,6 +162,9 @@ export class GitLabService {
     };
   }
 
+
+
+  
   private mapProject(data: Record<string, unknown>): GitLabProjectType {
     return {
       id: data.id as number,

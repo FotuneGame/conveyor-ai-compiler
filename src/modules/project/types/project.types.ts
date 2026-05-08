@@ -15,7 +15,7 @@ export type TempProjectType = {
   createdAt: Date;
 };
 
-export type CreateTempProjectDto = {
+export type CreateTempProjectType = {
   model: ModelType;
   graph: GraphType;
   nodes: NodeType[];

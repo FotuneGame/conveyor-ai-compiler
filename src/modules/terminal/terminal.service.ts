@@ -1,10 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { exec, spawn } from "child_process";
-import { promisify } from "util";
 import { WinstonService } from "src/shared/logger/winston.service";
 import type { TerminalExecResultType, TerminalCommandType } from "./types";
 
-const execAsync = promisify(exec);
+
 
 @Injectable()
 export class TerminalService {
@@ -73,10 +72,7 @@ export class TerminalService {
     });
   }
 
-  async executeWithTimeout(
-    command: TerminalCommandType,
-    timeoutMs: number
-  ): Promise<TerminalExecResultType> {
+  async executeWithTimeout(command: TerminalCommandType, timeoutMs: number): Promise<TerminalExecResultType> {
     return Promise.race([
       this.execute(command),
       new Promise<TerminalExecResultType>((_, reject) => {

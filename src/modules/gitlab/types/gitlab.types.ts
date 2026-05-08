@@ -25,17 +25,11 @@ export type GitLabPipelineType = {
   createdAt: Date;
 };
 
-export type CreateGitLabProjectDto = {
+export type CreateGitLabProjectType = {
   name: string;
   description?: string;
   visibility?: 'private' | 'internal' | 'public';
   namespaceId?: number;
-};
-
-export type PushToGitLabDto = {
-  projectPath: string;
-  branch: string;
-  message: string;
 };
 
 export type GitLabConfigType = {

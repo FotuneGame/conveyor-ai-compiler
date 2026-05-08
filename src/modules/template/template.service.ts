@@ -1,8 +1,6 @@
 ﻿import { Injectable } from "@nestjs/common";
-import { writeFileSync, mkdirSync, existsSync } from "fs";
-import { join } from "path";
 import { WinstonService } from "src/shared/logger/winston.service";
-import type { TemplateProjectConfigType, GeneratedFileType, TemplateContextType } from "./types";
+import type { GeneratedFileType, TemplateContextType } from "./types";
 
 @Injectable()
 export class TemplateService {
@@ -10,82 +8,40 @@ export class TemplateService {
     private readonly winstonService: WinstonService
   ) {}
 
-  async generateProject(config: TemplateProjectConfigType, context: TemplateContextType): Promise<string> {
-    const { outputDir } = config;
+  /**
+   * Генерирует массив файлов для проекта на основе контекста
+   * НЕ работает с файловой системой — только чистая генерация
+   */
+  generateFiles(context: TemplateContextType): GeneratedFileType[] {
+    this.winstonService.debug(`Generating files for model ${context.model.id}/graph ${context.graph.id}`);
 
-    this.winstonService.debug("Generating project in: " + outputDir);
-
-    if (!existsSync(outputDir)) {
-      mkdirSync(outputDir, { recursive: true });
-    }
-
-    const files = await this.generateFiles(context);
-
-    for (const file of files) {
-      const fullPath = join(outputDir, file.path);
-      const dir = fullPath.split("/").slice(0, -1).join("/");
-
-      if (dir && !existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-
-      writeFileSync(fullPath, file.content);
-      this.winstonService.debug("Generated file: " + file.path);
-    }
-
-    return outputDir;
+    return [
+      { path: ".env", content: this.generateEnv(context) },
+      { path: ".gitignore", content: this.generateGitignore() },
+      { path: ".dockerignore", content: this.generateDockerignore() },
+      { path: "Dockerfile", content: this.generateDockerfile(context) },
+      { path: ".gitlab-ci.yml", content: this.generateGitlabCi(context) },
+      { path: "package.json", content: this.generatePackageJson(context) },
+      { path: "src/index.ts", content: this.generateMainFile(context) },
+      { path: "src/app.ts", content: this.generateAppFile(context) },
+    ];
   }
 
-  async generateFiles(context: TemplateContextType): Promise<GeneratedFileType[]> {
-    const files: GeneratedFileType[] = [];
-
-    files.push({
-      path: ".env",
-      content: this.generateEnv(context),
-    });
-
-    files.push({
-      path: ".gitignore",
-      content: this.generateGitignore(),
-    });
-
-    files.push({
-      path: ".dockerignore",
-      content: this.generateDockerignore(),
-    });
-
-    files.push({
-      path: "Dockerfile",
-      content: this.generateDockerfile(context),
-    });
-
-    files.push({
-      path: ".gitlab-ci.yml",
-      content: this.generateGitlabCi(context),
-    });
-
-    files.push({
-      path: "package.json",
-      content: this.generatePackageJson(context),
-    });
-
-    files.push({
-      path: "src/index.ts",
-      content: this.generateMainFile(context),
-    });
-
-    files.push({
-      path: "src/app.ts",
-      content: this.generateAppFile(context),
-    });
-
-    return files;
+  patchEnvFile(baseEnv: string, customEnv?: Record<string, string>): string {
+    if (!customEnv) return baseEnv;
+    
+    const customLines = Object.entries(customEnv)
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n");
+    
+    return `${baseEnv}\n${customLines}`;
   }
 
-  private generateEnv(context: TemplateContextType): string {
-    const model = context.model;
-    const graph = context.graph;
 
+
+
+  private generateEnv(ctx: TemplateContextType): string {
+    const { model, graph } = ctx;
     const env = {
       NODE_ENV: "production",
       PORT: "3000",
@@ -94,64 +50,44 @@ export class TemplateService {
       MODEL_NAME: model.name,
       MODEL_TAG: model.tag,
     };
-
-    return Object.entries(env)
-      .map((entry) => entry[0] + "=" + entry[1])
-      .join("\n");
+    return Object.entries(env).map(([k, v]) => `${k}=${v}`).join("\n");
   }
 
   private generateGitignore(): string {
-    return [
-      "node_modules/",
-      "dist/",
-      ".env",
-      "*.log",
-      ".DS_Store",
-    ].join("\n");
+    return ["node_modules/", "dist/", ".env", "*.log", ".DS_Store"].join("\n");
   }
 
   private generateDockerignore(): string {
-    return [
-      "node_modules",
-      "npm-debug.log",
-      ".git",
-      ".env.local",
-      ".env.*.local",
-    ].join("\n");
+    return ["node_modules", "npm-debug.log", ".git", ".env.local", ".env.*.local"].join("\n");
   }
 
-  private generateDockerfile(context: TemplateContextType): string {
+  private generateDockerfile(ctx: TemplateContextType): string {
     return [
       "FROM node:20-alpine",
       "",
       "WORKDIR /app",
-      "",
       "COPY package*.json ./",
-      "",
       "RUN npm ci --only=production",
-      "",
       "COPY . .",
-      "",
       "RUN npm run build",
       "",
       "EXPOSE ${PORT:-3000}",
-      "",
       'CMD ["npm", "run", "start:prod"]',
     ].join("\n");
   }
 
-  private generateGitlabCi(context: TemplateContextType): string {
-    const model = context.model;
+  private generateGitlabCi(ctx: TemplateContextType): string {
+    const { model } = ctx;
     const imageName = model.name.toLowerCase().replace(/[^a-z0-9]/g, "-") + ":" + model.tag;
 
     return [
       "variables:",
-      "  DOCKER_IMAGE: " + imageName,
+      `  DOCKER_IMAGE: ${imageName}`,
       "  DOCKER_REGISTRY: registry.gitlab.com",
       "",
       "stages:",
       "  - build",
-      "  - test",
+      "  - test", 
       "  - deploy",
       "",
       "build:",
@@ -185,16 +121,14 @@ export class TemplateService {
     ].join("\n");
   }
 
-  private generatePackageJson(context: TemplateContextType): string {
-    const model = context.model;
+  private generatePackageJson(ctx: TemplateContextType): string {
+    const { model } = ctx;
     const name = model.name.toLowerCase().replace(/[^a-z0-9]/g, "-");
-    const version = model.tag;
-    const description = model.description || "Auto-generated Express project";
-
-    const packageJson = {
-      name: name,
-      version: version,
-      description: description,
+    
+    return JSON.stringify({
+      name,
+      version: model.tag,
+      description: model.description || "Auto-generated Express project",
       main: "dist/index.js",
       scripts: {
         build: "tsc",
@@ -214,16 +148,12 @@ export class TemplateService {
         "typescript": "^5.3.0",
         "ts-node": "^10.9.2",
       },
-    };
-
-    return JSON.stringify(packageJson, null, 2);
+    }, null, 2);
   }
 
-  private generateMainFile(context: TemplateContextType): string {
-    const model = context.model;
-    const modelName = model.name;
-
-    const lines = [
+  private generateMainFile(ctx: TemplateContextType): string {
+    const { model } = ctx;
+    return [
       "import { App } from './app';",
       "import dotenv from 'dotenv';",
       "",
@@ -233,23 +163,18 @@ export class TemplateService {
       "const port = process.env.PORT || 3000;",
       "",
       "app.start(port).then(() => {",
-      "  console.log('Server " + modelName + " running on port ' + port);",
+      `  console.log('Server ${model.name} running on port ' + port);`,
       "  console.log('Model ID: ' + process.env.MODEL_ID);",
       "  console.log('Graph ID: ' + process.env.GRAPH_ID);",
       "});",
-    ];
-
-    return lines.join("\n");
+    ].join("\n");
   }
 
-  private generateAppFile(context: TemplateContextType): string {
-    const nodes = context.nodes;
+  private generateAppFile(ctx: TemplateContextType): string {
+    const { nodes } = ctx;
+    const nodesInfo = nodes.map(n => `    // Node: ${n.name} (${n.type.name})`).join("\n");
 
-    const nodesInfo = nodes
-      .map((node) => "    // Node: " + node.name + " (" + node.type.name + ")")
-      .join("\n");
-
-    const lines = [
+    return [
       "import express, { Request, Response } from 'express';",
       "import cors from 'cors';",
       "",
@@ -289,22 +214,17 @@ export class TemplateService {
       "",
       "  async start(port: number): Promise<void> {",
       "    return new Promise((resolve) => {",
-      "      this.app.listen(port, () => {",
-      "        resolve();",
-      "      });",
+      "      this.app.listen(port, () => resolve());",
       "    });",
       "  }",
       "",
       "  async stop(): Promise<void> {",
       "    return new Promise((resolve) => {",
-      "      this.app.close(() => {",
-      "        resolve();",
-      "      });",
+      "      // @ts-expect-error express app.close exists in @types/express",
+      "      this.app.close(() => resolve());",
       "    });",
       "  }",
       "}",
-    ];
-
-    return lines.join("\n");
+    ].join("\n");
   }
 }
