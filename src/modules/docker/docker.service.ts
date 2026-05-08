@@ -1,4 +1,5 @@
-import { Injectable, Logger, InternalServerErrorException } from "@nestjs/common";
+import { Injectable, InternalServerErrorException } from "@nestjs/common";
+import { WinstonService } from "src/shared/logger/winston.service";
 import { TerminalService } from "../terminal/terminal.service";
 import type {
   DockerImageType,
@@ -12,14 +13,15 @@ import type {
 
 @Injectable()
 export class DockerService {
-  private readonly logger = new Logger(DockerService.name);
-
-  constructor(private readonly terminalService: TerminalService) {}
+  constructor(
+    private readonly winstonService: WinstonService,
+    private readonly terminalService: TerminalService,
+  ) {}
 
   async buildImage(data: BuildImageDto): Promise<{ success: boolean; imageId: string }> {
     const { path, tag, dockerfileName = "Dockerfile", buildArgs = {} } = data;
 
-    this.logger.debug(`Building Docker image: ${tag} from ${path}`);
+    this.winstonService.debug(`Building Docker image: ${tag} from ${path}`);
 
     let args = ["build", "-t", tag, "-f", dockerfileName, path];
 
@@ -34,14 +36,14 @@ export class DockerService {
       });
 
       if (result.code !== 0) {
-        this.logger.error(`Docker build failed: ${result.stderr}`);
+        this.winstonService.error(`Docker build failed: ${result.stderr}`);
         throw new InternalServerErrorException("Docker build failed");
       }
 
       const imageId = result.stdout.match(/Successfully built ([a-f0-9]+)/)?.[1] || "";
       return { success: true, imageId };
     } catch (error) {
-      this.logger.error(`Failed to build Docker image: ${error}`);
+      this.winstonService.error(`Failed to build Docker image: ${error}`);
       throw new InternalServerErrorException("Failed to build Docker image");
     }
   }
@@ -49,7 +51,7 @@ export class DockerService {
   async runContainer(data: RunContainerDto): Promise<{ success: boolean; containerId: string }> {
     const { image, name, env = {}, ports = {}, volumes = {}, network, restartPolicy } = data;
 
-    this.logger.debug(`Running Docker container: ${name}`);
+    this.winstonService.debug(`Running Docker container: ${name}`);
 
     const args = ["run", "-d", "--name", name];
 
@@ -82,14 +84,14 @@ export class DockerService {
       });
 
       if (result.code !== 0) {
-        this.logger.error(`Docker run failed: ${result.stderr}`);
+        this.winstonService.error(`Docker run failed: ${result.stderr}`);
         throw new InternalServerErrorException("Docker run failed");
       }
 
       const containerId = result.stdout.trim();
       return { success: true, containerId };
     } catch (error) {
-      this.logger.error(`Failed to run Docker container: ${error}`);
+      this.winstonService.error(`Failed to run Docker container: ${error}`);
       throw new InternalServerErrorException("Failed to run Docker container");
     }
   }
@@ -97,7 +99,7 @@ export class DockerService {
   async stopContainer(data: StopContainerDto): Promise<boolean> {
     const { containerId, timeout } = data;
 
-    this.logger.debug(`Stopping Docker container: ${containerId}`);
+    this.winstonService.debug(`Stopping Docker container: ${containerId}`);
 
     const args = ["stop", containerId];
     if (timeout !== undefined) {
@@ -112,7 +114,7 @@ export class DockerService {
 
       return result.code === 0;
     } catch (error) {
-      this.logger.error(`Failed to stop Docker container: ${error}`);
+      this.winstonService.error(`Failed to stop Docker container: ${error}`);
       return false;
     }
   }
@@ -120,7 +122,7 @@ export class DockerService {
   async removeContainer(data: RemoveContainerDto): Promise<boolean> {
     const { containerId, force = false } = data;
 
-    this.logger.debug(`Removing Docker container: ${containerId}`);
+    this.winstonService.debug(`Removing Docker container: ${containerId}`);
 
     const args = ["rm"];
     if (force) {
@@ -136,7 +138,7 @@ export class DockerService {
 
       return result.code === 0;
     } catch (error) {
-      this.logger.error(`Failed to remove Docker container: ${error}`);
+      this.winstonService.error(`Failed to remove Docker container: ${error}`);
       return false;
     }
   }
@@ -144,7 +146,7 @@ export class DockerService {
   async removeImage(data: RemoveImageDto): Promise<boolean> {
     const { imageId, force = false } = data;
 
-    this.logger.debug(`Removing Docker image: ${imageId}`);
+    this.winstonService.debug(`Removing Docker image: ${imageId}`);
 
     const args = ["rmi"];
     if (force) {
@@ -160,13 +162,13 @@ export class DockerService {
 
       return result.code === 0;
     } catch (error) {
-      this.logger.error(`Failed to remove Docker image: ${error}`);
+      this.winstonService.error(`Failed to remove Docker image: ${error}`);
       return false;
     }
   }
 
   async getContainers(): Promise<DockerContainerType[]> {
-    this.logger.debug("Getting Docker containers");
+    this.winstonService.debug("Getting Docker containers");
 
     try {
       const result = await this.terminalService.execute({
@@ -193,13 +195,13 @@ export class DockerService {
           ports: [],
         }));
     } catch (error) {
-      this.logger.error(`Failed to get Docker containers: ${error}`);
+      this.winstonService.error(`Failed to get Docker containers: ${error}`);
       return [];
     }
   }
 
   async getImages(): Promise<DockerImageType[]> {
-    this.logger.debug("Getting Docker images");
+    this.winstonService.debug("Getting Docker images");
 
     try {
       const result = await this.terminalService.execute({
@@ -222,13 +224,13 @@ export class DockerService {
           size: Number(image.Size) || 0,
         }));
     } catch (error) {
-      this.logger.error(`Failed to get Docker images: ${error}`);
+      this.winstonService.error(`Failed to get Docker images: ${error}`);
       return [];
     }
   }
 
   async getContainerLogs(containerId: string, tail: number = 100): Promise<string> {
-    this.logger.debug(`Getting logs for container: ${containerId}`);
+    this.winstonService.debug(`Getting logs for container: ${containerId}`);
 
     try {
       const result = await this.terminalService.execute({
@@ -238,7 +240,7 @@ export class DockerService {
 
       return result.stdout + result.stderr;
     } catch (error) {
-      this.logger.error(`Failed to get container logs: ${error}`);
+      this.winstonService.error(`Failed to get container logs: ${error}`);
       return "";
     }
   }

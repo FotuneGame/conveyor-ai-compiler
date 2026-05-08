@@ -1,16 +1,19 @@
-﻿import { Injectable, Logger } from "@nestjs/common";
+﻿import { Injectable } from "@nestjs/common";
 import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
+import { WinstonService } from "src/shared/logger/winston.service";
 import type { TemplateProjectConfigType, GeneratedFileType, TemplateContextType } from "./types";
 
 @Injectable()
 export class TemplateService {
-  private readonly logger = new Logger(TemplateService.name);
+  constructor(
+    private readonly winstonService: WinstonService
+  ) {}
 
   async generateProject(config: TemplateProjectConfigType, context: TemplateContextType): Promise<string> {
     const { outputDir } = config;
 
-    this.logger.debug("Generating project in: " + outputDir);
+    this.winstonService.debug("Generating project in: " + outputDir);
 
     if (!existsSync(outputDir)) {
       mkdirSync(outputDir, { recursive: true });
@@ -27,7 +30,7 @@ export class TemplateService {
       }
 
       writeFileSync(fullPath, file.content);
-      this.logger.debug("Generated file: " + file.path);
+      this.winstonService.debug("Generated file: " + file.path);
     }
 
     return outputDir;

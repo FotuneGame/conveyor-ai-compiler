@@ -1,8 +1,9 @@
-import { Injectable, Logger, InternalServerErrorException } from "@nestjs/common";
+import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
 import { join } from "path";
 import { rm, mkdir, existsSync, writeFileSync } from "fs";
+import { WinstonService } from "src/shared/logger/winston.service";
 import { TerminalService } from "../terminal/terminal.service";
 import { GitLabService } from "../gitlab/gitlab.service";
 import { DockerService } from "../docker/docker.service";
@@ -17,12 +18,12 @@ import type { ModelType, GraphType, NodeType, DataType, NodeTypeType, ProtocolTy
 
 @Injectable()
 export class ProjectService {
-  private readonly logger = new Logger(ProjectService.name);
   private readonly tempDir: string;
   private readonly projects: Map<string, TempProjectType> = new Map();
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly winstonService: WinstonService,
     private readonly terminalService: TerminalService,
     private readonly gitLabService: GitLabService,
     private readonly dockerService: DockerService,
@@ -39,7 +40,7 @@ export class ProjectService {
     const containerName = `compiler-${projectId}`;
     const imageName = `compiler-${projectId}:latest`;
 
-    this.logger.debug(`Creating temp project: ${projectId}`);
+    this.winstonService.debug(`Creating temp project: ${projectId}`);
 
     if (!existsSync(this.tempDir)) {
       mkdir(this.tempDir, { recursive: true }, () => {});
@@ -97,7 +98,7 @@ export class ProjectService {
         gitLabPipelineId: pipelineId,
       };
     } catch (error) {
-      this.logger.error(`Compile failed for project ${projectId}: ${error}`);
+      this.winstonService.error(`Compile failed for project ${projectId}: ${error}`);
       await this.cleanupProject(projectId);
 
       return {
@@ -115,7 +116,7 @@ export class ProjectService {
     const project = this.projects.get(projectId);
 
     if (!project) {
-      this.logger.warn(`Project ${projectId} not found for stopping`);
+      this.winstonService.warn(`Project ${projectId} not found for stopping`);
       return false;
     }
 
@@ -126,7 +127,7 @@ export class ProjectService {
 
       return true;
     } catch (error) {
-      this.logger.error(`Failed to stop project ${projectId}: ${error}`);
+      this.winstonService.error(`Failed to stop project ${projectId}: ${error}`);
       return false;
     }
   }
@@ -138,24 +139,24 @@ export class ProjectService {
       return;
     }
 
-    this.logger.debug(`Cleaning up project: ${projectId}`);
+    this.winstonService.debug(`Cleaning up project: ${projectId}`);
 
     try {
       await this.dockerService.stopContainer({ containerId: project.containerName });
     } catch (error) {
-      this.logger.warn(`Failed to stop container: ${error}`);
+      this.winstonService.warn(`Failed to stop container: ${error}`);
     }
 
     try {
       await this.dockerService.removeContainer({ containerId: project.containerName, force: true });
     } catch (error) {
-      this.logger.warn(`Failed to remove container: ${error}`);
+      this.winstonService.warn(`Failed to remove container: ${error}`);
     }
 
     try {
       await this.dockerService.removeImage({ imageId: project.imageName, force: true });
     } catch (error) {
-      this.logger.warn(`Failed to remove image: ${error}`);
+      this.winstonService.warn(`Failed to remove image: ${error}`);
     }
 
     try {
@@ -163,7 +164,7 @@ export class ProjectService {
         rm(project.path, { recursive: true, force: true }, () => {});
       }
     } catch (error) {
-      this.logger.warn(`Failed to remove temp directory: ${error}`);
+      this.winstonService.warn(`Failed to remove temp directory: ${error}`);
     }
 
     this.projects.delete(projectId);
@@ -246,7 +247,7 @@ export class ProjectService {
   }
 
   private async buildDockerImage(project: TempProjectType): Promise<void> {
-    this.logger.debug(`Building Docker image for project: ${project.id}`);
+    this.winstonService.debug(`Building Docker image for project: ${project.id}`);
 
     const result = await this.dockerService.buildImage({
       path: project.path,
@@ -259,7 +260,7 @@ export class ProjectService {
   }
 
   private async syncToGitLab(project: TempProjectType): Promise<number> {
-    this.logger.debug(`Syncing project to GitLab: ${project.id}`);
+    this.winstonService.debug(`Syncing project to GitLab: ${project.id}`);
 
     const projectName = `compiler-${project.modelId}-${project.graphId}`;
 
@@ -283,7 +284,7 @@ export class ProjectService {
     });
 
     if (result.code !== 0) {
-      this.logger.warn(`Git init failed: ${result.stderr}`);
+      this.winstonService.warn(`Git init failed: ${result.stderr}`);
     }
 
     const addResult = await this.terminalService.execute({
@@ -298,19 +299,19 @@ export class ProjectService {
       cwd: project.path,
     });
 
-    this.logger.debug(`Synced project to Git: ${project.id}`);
+    this.winstonService.debug(`Synced project to Git: ${project.id}`);
 
     return gitLabProjectId;
   }
 
   private async triggerGitLabPipeline(project: TempProjectType, projectId: number): Promise<number> {
-    this.logger.debug(`Triggering GitLab pipeline for project: ${project.id}`);
+    this.winstonService.debug(`Triggering GitLab pipeline for project: ${project.id}`);
 
     try {
       const pipeline = await this.gitLabService.createPipeline(projectId, "main");
       return pipeline.id;
     } catch (error) {
-      this.logger.warn(`Failed to trigger GitLab pipeline: ${error}`);
+      this.winstonService.warn(`Failed to trigger GitLab pipeline: ${error}`);
       return 0;
     }
   }

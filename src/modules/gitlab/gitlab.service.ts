@@ -1,7 +1,8 @@
-import { Injectable, Logger, InternalServerErrorException } from "@nestjs/common";
+import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
+import { WinstonService } from "src/shared/logger/winston.service";
 import type {
   GitLabProjectType,
   GitLabCommitType,
@@ -9,11 +10,9 @@ import type {
   CreateGitLabProjectDto,
   GitLabConfigType,
 } from "./types";
-import type { PushToGitLabDto } from "./dto/push.dto";
 
 @Injectable()
 export class GitLabService {
-  private readonly logger = new Logger(GitLabService.name);
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly projectId: number;
@@ -21,7 +20,8 @@ export class GitLabService {
 
   constructor(
     private readonly httpService: HttpService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly winstonService: WinstonService
   ) {
     this.baseUrl = this.configService.get<string>("core.gitlab.baseUrl", "https://gitlab.com");
     this.token = this.configService.get<string>("core.gitlab.token", "");
@@ -37,7 +37,7 @@ export class GitLabService {
   }
 
   async createProject(data: CreateGitLabProjectDto): Promise<GitLabProjectType> {
-    this.logger.debug(`Creating GitLab project: ${data.name}`);
+    this.winstonService.debug(`Creating GitLab project: ${data.name}`);
 
     try {
       const payload: Record<string, unknown> = {
@@ -61,13 +61,13 @@ export class GitLabService {
 
       return this.mapProject(response.data);
     } catch (error) {
-      this.logger.error(`Failed to create GitLab project: ${error}`);
+      this.winstonService.error(`Failed to create GitLab project: ${error}`);
       throw new InternalServerErrorException("Failed to create GitLab project");
     }
   }
 
   async getProject(projectId: number): Promise<GitLabProjectType> {
-    this.logger.debug(`Getting GitLab project: ${projectId}`);
+    this.winstonService.debug(`Getting GitLab project: ${projectId}`);
 
     try {
       const response = await firstValueFrom(
@@ -78,13 +78,13 @@ export class GitLabService {
 
       return this.mapProject(response.data);
     } catch (error) {
-      this.logger.error(`Failed to get GitLab project: ${error}`);
+      this.winstonService.error(`Failed to get GitLab project: ${error}`);
       throw new InternalServerErrorException("Failed to get GitLab project");
     }
   }
 
   async deleteProject(projectId: number): Promise<void> {
-    this.logger.debug(`Deleting GitLab project: ${projectId}`);
+    this.winstonService.debug(`Deleting GitLab project: ${projectId}`);
 
     try {
       await firstValueFrom(
@@ -93,13 +93,13 @@ export class GitLabService {
         })
       );
     } catch (error) {
-      this.logger.error(`Failed to delete GitLab project: ${error}`);
+      this.winstonService.error(`Failed to delete GitLab project: ${error}`);
       throw new InternalServerErrorException("Failed to delete GitLab project");
     }
   }
 
   async createPipeline(projectId: number, ref: string): Promise<GitLabPipelineType> {
-    this.logger.debug(`Creating GitLab pipeline for project ${projectId}, ref: ${ref}`);
+    this.winstonService.debug(`Creating GitLab pipeline for project ${projectId}, ref: ${ref}`);
 
     try {
       const response = await firstValueFrom(
@@ -112,13 +112,13 @@ export class GitLabService {
 
       return this.mapPipeline(response.data);
     } catch (error) {
-      this.logger.error(`Failed to create GitLab pipeline: ${error}`);
+      this.winstonService.error(`Failed to create GitLab pipeline: ${error}`);
       throw new InternalServerErrorException("Failed to create GitLab pipeline");
     }
   }
 
   async getPipeline(projectId: number, pipelineId: number): Promise<GitLabPipelineType> {
-    this.logger.debug(`Getting GitLab pipeline: ${pipelineId}`);
+    this.winstonService.debug(`Getting GitLab pipeline: ${pipelineId}`);
 
     try {
       const response = await firstValueFrom(
@@ -130,13 +130,13 @@ export class GitLabService {
 
       return this.mapPipeline(response.data);
     } catch (error) {
-      this.logger.error(`Failed to get GitLab pipeline: ${error}`);
+      this.winstonService.error(`Failed to get GitLab pipeline: ${error}`);
       throw new InternalServerErrorException("Failed to get GitLab pipeline");
     }
   }
 
   async getLastCommits(projectId: number, ref: string = "main"): Promise<GitLabCommitType[]> {
-    this.logger.debug(`Getting last commits for project ${projectId}`);
+    this.winstonService.debug(`Getting last commits for project ${projectId}`);
 
     try {
       const response = await firstValueFrom(
@@ -148,7 +148,7 @@ export class GitLabService {
 
       return response.data.map((commit: unknown) => this.mapCommit(commit));
     } catch (error) {
-      this.logger.error(`Failed to get commits: ${error}`);
+      this.winstonService.error(`Failed to get commits: ${error}`);
       throw new InternalServerErrorException("Failed to get commits");
     }
   }

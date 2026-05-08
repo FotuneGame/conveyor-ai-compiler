@@ -1,7 +1,7 @@
 import { Controller, Post, Get, Body, Param, Delete } from "@nestjs/common";
 import { ProjectService } from "./project.service";
 import type { TempProjectType, CompileResultType, CreateTempProjectDto } from "./types";
-import type { StopProjectDto } from "./dto/stop-project.dto";
+
 
 @Controller("project")
 export class ProjectController {

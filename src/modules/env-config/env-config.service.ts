@@ -1,21 +1,23 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { readFileSync, existsSync } from "fs";
+import { WinstonService } from "src/shared/logger/winston.service";
 import type { EnvConfigType } from "./types";
 
 @Injectable()
 export class EnvConfigService {
-  private readonly logger = new Logger(EnvConfigService.name);
-
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly winstonService: WinstonService,
+    private readonly configService: ConfigService
+  ) {}
 
   async getDefaultEnvConfig(): Promise<EnvConfigType> {
     const envPath = this.configService.get<string>("core.compiler.envPath", process.cwd());
 
-    this.logger.debug(`Reading default env from: ${envPath}`);
+    this.winstonService.debug(`Reading default env from: ${envPath}`);
 
     if (!existsSync(envPath)) {
-      this.logger.warn(`Example env file not found: ${envPath}`);
+      this.winstonService.warn(`Example env file not found: ${envPath}`);
       return this.getFallbackEnvConfig();
     }
 
@@ -23,7 +25,7 @@ export class EnvConfigService {
       const content = readFileSync(envPath, "utf-8");
       return this.parseEnvContent(content);
     } catch (error) {
-      this.logger.error(`Failed to read env file: ${error}`);
+      this.winstonService.error(`Failed to read env file: ${error}`);
       return this.getFallbackEnvConfig();
     }
   }
