@@ -85,7 +85,7 @@ export class GitLabService {
     try {
       const response = await firstValueFrom(
         this.httpService.get<{ projects: GitLabProjectType[] }>(
-          `${this.baseUrl}/api/v4/projects?search=${encodeURIComponent(name)}&per_page=10`,
+          `${this.baseUrl}/api/v4/projects?owned=true&per_page=100`,
           { headers: this.getHeaders() }
         )
       );
@@ -98,6 +98,7 @@ export class GitLabService {
         return found;
       }
 
+      this.winstonService.debug(`Project ${name} not found in owned projects`);
       return null;
     } catch (error) {
       this.winstonService.error(`Failed to find GitLab project: ${error}`);
@@ -111,6 +112,26 @@ export class GitLabService {
     const token = this.configService.get<string>("core.gitlab.token", "");
 
     try {
+      // Инициализируем git если нужно
+      await this.terminalService.execute({
+        command: "git",
+        args: ["init"],
+        cwd: projectPath,
+      }).catch(() => {});
+
+      // Настраиваем пользователя
+      await this.terminalService.execute({
+        command: "git",
+        args: ["config", "user.email", "compiler@example.com"],
+        cwd: projectPath,
+      }).catch(() => {});
+
+      await this.terminalService.execute({
+        command: "git",
+        args: ["config", "user.name", "Compiler"],
+        cwd: projectPath,
+      }).catch(() => {});
+
       // Удаляем существующий remote если есть
       await this.terminalService.execute({
         command: "git",
@@ -126,10 +147,24 @@ export class GitLabService {
         cwd: projectPath,
       });
 
-      // Отправляем код
+      // Добавляем все файлы
+      await this.terminalService.execute({
+        command: "git",
+        args: ["add", "."],
+        cwd: projectPath,
+      });
+
+      // Коммитим
+      await this.terminalService.execute({
+        command: "git",
+        args: ["commit", "-m", `Compiler build ${Date.now()}`],
+        cwd: projectPath,
+      }).catch(() => {});
+
+      // Отправляем код с force push для автоматического разрешения конфликтов
       const result = await this.terminalService.execute({
         command: "git",
-        args: ["push", "-u", "origin", "main"],
+        args: ["push", "--force", "-u", "origin", "main"],
         cwd: projectPath,
       });
 

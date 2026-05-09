@@ -8,12 +8,12 @@ import { TerminalService } from "../terminal/terminal.service";
 import { GitLabService } from "../gitlab/gitlab.service";
 import { TemplateService } from "../template/template.service";
 import { BackendService } from "../backend/backend.service";
+import { StoreService } from "../store/store.service";
 import type { TempProjectType, CreateTempProjectType, CompileResultType, ContainerLogsType } from "./types";
 
 @Injectable()
 export class ProjectService {
   private readonly tempDir: string;
-  private readonly projects = new Map<string, TempProjectType>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -22,6 +22,7 @@ export class ProjectService {
     private readonly gitLabService: GitLabService,
     private readonly templateService: TemplateService,
     private readonly backendService: BackendService,
+    private readonly storeService: StoreService,
   ) {
     this.tempDir = this.configService.get<string>("core.compiler.tempDir", "./tmp/compiler-projects");
   }
@@ -58,12 +59,12 @@ export class ProjectService {
       createdAt: new Date(),
     };
 
-    this.projects.set(projectId, project);
+    this.storeService.set(projectId, project);
     return project;
   }
 
   async compileProject(projectId: string): Promise<CompileResultType> {
-    const project = this.projects.get(projectId);
+    const project = this.storeService.get(projectId);
     if (!project) {
       return this.errorResult(projectId, "Project not found");
     }
@@ -93,7 +94,7 @@ export class ProjectService {
   }
 
   async stopProject(projectId: string): Promise<boolean> {
-    const project = this.projects.get(projectId);
+    const project = this.storeService.get(projectId);
     if (!project) {
       this.winstonService.warn(`Project ${projectId} not found for stopping`);
       return false;
@@ -103,21 +104,21 @@ export class ProjectService {
 
     try {
       // 🔄 Останавливаем контейнер через GitLab CI/CD pipeline (cleanup stage)
-      const gitLabProjectId = this.configService.get<number>("core.gitlab.projectId", 0);
-      if (gitLabProjectId === 0) {
-        this.winstonService.warn("GitLab project ID not configured, cannot stop container via GitLab");
+      // Используем gitLabProjectId из проекта (если сохранили при компиляции)
+      if (!project.gitLabProjectId) {
+        this.winstonService.warn("GitLab project ID not found for this project");
         return false;
       }
 
       // Запускаем pipeline с cleanup stage через переменную STOP_CONTAINER
-      await this.gitLabService.createPipeline(gitLabProjectId, "main", {
+      await this.gitLabService.createPipeline(project.gitLabProjectId, "main", {
         STOP_CONTAINER: "true",
       });
 
       // Синхронизация с backend
       await this.syncCleanupWithBackend(project);
 
-      this.projects.delete(projectId);
+      this.storeService.delete(projectId);
       return true;
     } catch (error) {
       this.winstonService.error(`Failed to stop project ${projectId}: ${error}`);
@@ -126,7 +127,7 @@ export class ProjectService {
   }
 
   async getContainerLogs(modelId: number, graphId: number): Promise<ContainerLogsType | null> {
-    const project = this.findProjectByModelAndGraph(modelId, graphId);
+    const project = this.storeService.findProjectByModelAndGraph(String(modelId), String(graphId));
 
     if (!project) {
       this.winstonService.warn(`Project not found for model ${modelId} and graph ${graphId}`);
@@ -138,13 +139,14 @@ export class ProjectService {
       return null;
     }
 
-    try {
-      const gitLabProjectId = this.configService.get<number>("core.gitlab.projectId", 0);
-      if (gitLabProjectId === 0) {
-        this.winstonService.warn("GitLab project ID not configured");
-        return null;
-      }
+    if (!project.gitLabProjectId) {
+      this.winstonService.warn(`No GitLab project ID found for project ${project.id}`);
+      return null;
+    }
 
+    const gitLabProjectId = project.gitLabProjectId;
+
+    try {
       // Получаем jobs пайплайна
       const jobs = await this.gitLabService.getPipelineJobs(gitLabProjectId, project.gitLabPipelineId);
 
@@ -171,7 +173,7 @@ export class ProjectService {
   }
 
   async cleanupProject(projectId: string): Promise<void> {
-    const project = this.projects.get(projectId);
+    const project = this.storeService.get(projectId);
     if (!project) return;
 
     this.winstonService.debug(`Cleaning up project: ${projectId}`);
@@ -185,7 +187,7 @@ export class ProjectService {
       rmSync(project.path, { recursive: true, force: true });
     }
 
-    this.projects.delete(projectId);
+    this.storeService.delete(projectId);
   }
 
   private async syncCleanupWithBackend(project: TempProjectType): Promise<void> {
@@ -209,20 +211,18 @@ export class ProjectService {
 
 
   getProject(projectId: string): TempProjectType | undefined {
-    return this.projects.get(projectId);
+    return this.storeService.get(projectId);
   }
 
   getAllProjects(): TempProjectType[] {
-    return Array.from(this.projects.values());
+    return Object.values(this.storeService.getAll()).map((p) => ({
+      ...p,
+      createdAt: new Date(p.createdAt),
+    }));
   }
 
   findProjectByModelAndGraph(modelId: number, graphId: number): TempProjectType | undefined {
-    for (const p of this.projects.values()) {
-      if (p.modelId === String(modelId) && p.graphId === String(graphId)) {
-        return p;
-      }
-    }
-    return undefined;
+    return this.storeService.findProjectByModelAndGraph(String(modelId), String(graphId));
   }
 
 
@@ -243,25 +243,9 @@ export class ProjectService {
 
   private async syncToGitLabService(project: TempProjectType): Promise<number> {
     this.winstonService.debug(`Syncing project ${project.id} to GitLab`);
-    const projectName = `compiler-${project.modelId}-${project.graphId}`;
+    const projectName = `compiler-${project.modelId}-${project.graphId}-${Date.now()}`;
     
-    // Сначала пытаемся найти существующий проект
-    let existingProject = await this.gitLabService.findProjectByName(projectName);
-    
-    if (existingProject) {
-      this.winstonService.debug(`Using existing GitLab project: ${projectName} (ID: ${existingProject.id})`);
-      
-      // Если проект найден, все равно отправляем код (update)
-      try {
-        await this.gitLabService.pushToRepository(project.path, existingProject.id, projectName);
-      } catch (error) {
-        this.winstonService.warn(`Failed to push to existing project: ${error}`);
-      }
-      
-      return existingProject.id;
-    }
-
-    // Если не нашли, создаем новый
+    // Создаем новый проект с уникальным именем (с timestamp)
     this.winstonService.debug(`Creating new GitLab project: ${projectName}`);
     const newProject = await this.gitLabService.createProject({
       name: projectName,
@@ -271,7 +255,10 @@ export class ProjectService {
 
     this.winstonService.debug(`Created GitLab project: ${newProject.name} (ID: ${newProject.id})`);
     
-    // Отправляем код в новый репозиторий
+    // Сохраняем gitLabProjectId в проекте
+    project.gitLabProjectId = newProject.id;
+    
+    // Отправляем код в новый репозиторий с force push
     await this.gitLabService.pushToRepository(project.path, newProject.id, projectName);
 
     return newProject.id;
@@ -295,7 +282,7 @@ export class ProjectService {
   }
 
   private errorResult(projectId: string, error: string): CompileResultType {
-    const project = this.projects.get(projectId);
+    const project = this.storeService.get(projectId);
     return {
       success: false,
       projectId,
