@@ -5,6 +5,7 @@ export interface CoreConfig {
   compiler: {
     tempDir: string,
     envPath: string,
+    keepTempFiles: boolean,
   },
   gitlab: {
     baseUrl: string,
@@ -19,6 +20,7 @@ export default registerAs(
     compiler: {
       tempDir: process.env.COMPILER_TEMP_DIR || './tmp/compiler-projects',
       envPath: process.env.ENV_PATH || './public/example.env',
+      keepTempFiles: process.env.KEEP_TEMP_FILES === 'true',
     },
     gitlab: {
       baseUrl: process.env.GITLAB_BASE_URL || 'https://gitlab.com',

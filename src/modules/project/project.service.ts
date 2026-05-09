@@ -179,7 +179,9 @@ export class ProjectService {
     // 🔄 Синхронизация состояния контейнеров с backend
     await this.syncCleanupWithBackend(project);
 
-    if (existsSync(project.path)) {
+    const keepTempFiles = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
+    
+    if (!keepTempFiles && existsSync(project.path)) {
       rmSync(project.path, { recursive: true, force: true });
     }
 
@@ -243,22 +245,36 @@ export class ProjectService {
     this.winstonService.debug(`Syncing project ${project.id} to GitLab`);
     const projectName = `compiler-${project.modelId}-${project.graphId}`;
     
-    let gitLabProjectId = this.configService.get<number>("core.gitlab.projectId", 0);
-    if (gitLabProjectId === 0) {
-      const newProject = await this.gitLabService.createProject({
-        name: projectName,
-        description: `Compiler project for model ${project.modelId}, graph ${project.graphId}`,
-        visibility: "private",
-      });
-      gitLabProjectId = newProject.id;
+    // Сначала пытаемся найти существующий проект
+    let existingProject = await this.gitLabService.findProjectByName(projectName);
+    
+    if (existingProject) {
+      this.winstonService.debug(`Using existing GitLab project: ${projectName} (ID: ${existingProject.id})`);
+      
+      // Если проект найден, все равно отправляем код (update)
+      try {
+        await this.gitLabService.pushToRepository(project.path, existingProject.id, projectName);
+      } catch (error) {
+        this.winstonService.warn(`Failed to push to existing project: ${error}`);
+      }
+      
+      return existingProject.id;
     }
 
-    // 📦 Git operations via terminal
-    await this.gitCmdService(project.path, "init");
-    await this.gitCmdService(project.path, "add", ".");
-    await this.gitCmdService(project.path, "commit", "-m", `Compiler build for ${project.modelId}/${project.graphId}`);
+    // Если не нашли, создаем новый
+    this.winstonService.debug(`Creating new GitLab project: ${projectName}`);
+    const newProject = await this.gitLabService.createProject({
+      name: projectName,
+      description: `Compiler project for model ${project.modelId}, graph ${project.graphId}`,
+      visibility: "private",
+    });
+
+    this.winstonService.debug(`Created GitLab project: ${newProject.name} (ID: ${newProject.id})`);
     
-    return gitLabProjectId;
+    // Отправляем код в новый репозиторий
+    await this.gitLabService.pushToRepository(project.path, newProject.id, projectName);
+
+    return newProject.id;
   }
 
   private async gitCmdService(cwd: string, ...args: string[]): Promise<void> {

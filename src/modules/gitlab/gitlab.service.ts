@@ -3,6 +3,7 @@ import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
 import { WinstonService } from "src/shared/logger/winston.service";
+import { TerminalService } from "../terminal/terminal.service";
 import type { GitLabProjectType, GitLabPipelineType, GitLabJobType, CreateGitLabProjectType } from "./types";
 
 @Injectable()
@@ -13,7 +14,8 @@ export class GitLabService {
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
-    private readonly winstonService: WinstonService
+    private readonly winstonService: WinstonService,
+    private readonly terminalService: TerminalService,
   ) {
     this.baseUrl = this.configService.get<string>("core.gitlab.baseUrl", "https://gitlab.com");
     this.token = this.configService.get<string>("core.gitlab.token", "");
@@ -74,6 +76,72 @@ export class GitLabService {
     } catch (error) {
       this.winstonService.error(`Failed to create GitLab pipeline: ${error}`);
       throw new InternalServerErrorException("Failed to create GitLab pipeline");
+    }
+  }
+
+  async findProjectByName(name: string): Promise<GitLabProjectType | null> {
+    this.winstonService.debug(`Searching GitLab project by name: ${name}`);
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<{ projects: GitLabProjectType[] }>(
+          `${this.baseUrl}/api/v4/projects?search=${encodeURIComponent(name)}&per_page=10`,
+          { headers: this.getHeaders() }
+        )
+      );
+
+      const projects = response.data.projects || [];
+      const found = projects.find(p => p.name === name);
+      
+      if (found) {
+        this.winstonService.debug(`Found GitLab project: ${found.name} (ID: ${found.id})`);
+        return found;
+      }
+
+      return null;
+    } catch (error) {
+      this.winstonService.error(`Failed to find GitLab project: ${error}`);
+      return null;
+    }
+  }
+
+  async pushToRepository(projectPath: string, projectId: number, projectName: string): Promise<void> {
+    this.winstonService.debug(`Pushing code to GitLab repository: ${projectName}`);
+
+    const token = this.configService.get<string>("core.gitlab.token", "");
+
+    try {
+      // Удаляем существующий remote если есть
+      await this.terminalService.execute({
+        command: "git",
+        args: ["remote", "remove", "origin"],
+        cwd: projectPath,
+      }).catch(() => {});
+
+      // Добавляем remote
+      const remoteUrl = `https://oauth2:${token}@${this.baseUrl.replace('/api/v4', '').replace('https://', '')}/${projectName}.git`;
+      await this.terminalService.execute({
+        command: "git",
+        args: ["remote", "add", "origin", remoteUrl],
+        cwd: projectPath,
+      });
+
+      // Отправляем код
+      const result = await this.terminalService.execute({
+        command: "git",
+        args: ["push", "-u", "origin", "main"],
+        cwd: projectPath,
+      });
+
+      if (result.code !== 0) {
+        this.winstonService.error(`Failed to push to repository: ${result.stderr}`);
+        throw new InternalServerErrorException("Failed to push code to GitLab");
+      }
+
+      this.winstonService.debug(`Successfully pushed code to ${projectName}`);
+    } catch (error) {
+      this.winstonService.error(`Failed to push to repository: ${error}`);
+      throw new InternalServerErrorException("Failed to push code to GitLab");
     }
   }
 

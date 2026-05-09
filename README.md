@@ -118,6 +118,7 @@ COMPILER_SECRET=test-compiler-secret
 GITLAB_BASE_URL=https://gitlab.com
 GITLAB_TOKEN=your-gitlab-token-here
 
+KEEP_TEMP_FILES=false
 COMPILER_TEMP_DIR=./tmp/compiler-projects
 ENV_PATH=./public/example.env
 ```
