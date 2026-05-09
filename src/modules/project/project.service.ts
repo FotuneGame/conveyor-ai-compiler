@@ -8,6 +8,7 @@ import { TerminalService } from "../terminal/terminal.service";
 import { GitLabService } from "../gitlab/gitlab.service";
 import { DockerService } from "../docker/docker.service";
 import { TemplateService } from "../template/template.service";
+import { BackendService } from "../backend/backend.service";
 import type { TempProjectType, CreateTempProjectType, CompileResultType } from "./types";
 
 
@@ -20,10 +21,11 @@ export class ProjectService {
   constructor(
     private readonly configService: ConfigService,
     private readonly winstonService: WinstonService,
-    private readonly terminal: TerminalService,
-    private readonly gitLab: GitLabService,
-    private readonly docker: DockerService,
-    private readonly template: TemplateService,
+    private readonly terminalService: TerminalService,
+    private readonly gitLabService: GitLabService,
+    private readonly dockerService: DockerService,
+    private readonly templateService: TemplateService,
+    private readonly backendService: BackendService,
   ) {
     this.tempDir = this.configService.get<string>("core.compiler.tempDir", "./tmp/compiler-projects");
   }
@@ -37,14 +39,14 @@ export class ProjectService {
     this.ensureDir(projectPath);
 
     // 🔄 Генерируем файлы через TemplateService и записываем через ProjectService
-    const files = this.template.generateFiles({ model, graph, nodes, dataTypes, nodeTypes, protocolTypes });
+    const files = this.templateService.generateFiles({ model, graph, nodes, dataTypes, nodeTypes, protocolTypes });
     
     for (const file of files) {
       const fullPath = join(projectPath, file.path);
       let content = file.content;
       
       if (file.path === ".env" && customEnv) {
-        content = this.template.patchEnvFile(content, customEnv);
+        content = this.templateService.patchEnvFile(content, customEnv);
       }
       
       this.writeFile(fullPath, content);
@@ -71,9 +73,19 @@ export class ProjectService {
     }
 
     try {
-      await this.buildImage(project);
-      const gitLabProjectId = await this.syncToGitLab(project);
-      const pipelineId = await this.triggerPipeline(project, gitLabProjectId);
+      await this.buildImageService(project);
+      const gitLabProjectId = await this.syncToGitLabService(project);
+      const pipelineId = await this.triggerPipelineService(project, gitLabProjectId);
+
+      // 🔄 Создаем запись о контейнере в backend
+      const modelId = parseInt(project.modelId, 10);
+      const containerUrl = this.getContainerUrl(project);
+      await this.backendService.createContainer(modelId, {
+        name: project.containerName,
+        logsUrl: `${containerUrl}/logs`,
+        dockerUrl: containerUrl,
+        endpointUrl: containerUrl,
+      });
 
       return {
         success: true,
@@ -99,9 +111,20 @@ export class ProjectService {
     }
 
     try {
-      await this.docker.stopContainer({ containerId: project.containerName });
-      await this.docker.removeContainer({ containerId: project.containerName, force: true });
-      await this.docker.removeImage({ imageId: project.imageName, force: true });
+      await this.dockerService.stopContainer({ containerId: project.containerName });
+      await this.dockerService.removeContainer({ containerId: project.containerName, force: true });
+      await this.dockerService.removeImage({ imageId: project.imageName, force: true });
+
+      // 🔄 Обновляем статус контейнера в backend
+      const modelId = parseInt(project.modelId, 10);
+      const containers = await this.backendService.getContainers(modelId);
+      if (containers?.data) {
+        const backendContainer = containers.data.find((c) => c.name === project.containerName);
+        if (backendContainer) {
+          await this.backendService.updateContainer(modelId, backendContainer.id, { active: false });
+        }
+      }
+
       return true;
     } catch (error) {
       this.winstonService.error(`Failed to stop project ${projectId}: ${error}`);
@@ -116,15 +139,35 @@ export class ProjectService {
     this.winstonService.debug(`Cleaning up project: ${projectId}`);
 
     // 🧹 Безопасная очистка с игнорированием ошибок
-    await this.safeDockerOp(() => this.docker.stopContainer({ containerId: project.containerName }));
-    await this.safeDockerOp(() => this.docker.removeContainer({ containerId: project.containerName, force: true }));
-    await this.safeDockerOp(() => this.docker.removeImage({ imageId: project.imageName, force: true }));
+    await this.safeDockerOp(() => this.dockerService.stopContainer({ containerId: project.containerName }));
+    await this.safeDockerOp(() => this.dockerService.removeContainer({ containerId: project.containerName, force: true }));
+    await this.safeDockerOp(() => this.dockerService.removeImage({ imageId: project.imageName, force: true }));
     
+    // 🔄 Синхронизация состояния контейнеров с backend
+    await this.syncCleanupWithBackend(project);
+
     if (existsSync(project.path)) {
       rmSync(project.path, { recursive: true, force: true });
     }
 
     this.projects.delete(projectId);
+  }
+
+  private async syncCleanupWithBackend(project: TempProjectType): Promise<void> {
+    try {
+      const modelId = parseInt(project.modelId, 10);
+      const containers = await this.backendService.getContainers(modelId);
+
+      if (containers?.data) {
+        const backendContainer = containers.data.find((c) => c.name === project.containerName);
+        if (backendContainer) {
+          this.winstonService.debug(`Removing container ${backendContainer.id} from backend for model ${modelId}`);
+          await this.backendService.deleteContainer(modelId, backendContainer.id);
+        }
+      }
+    } catch (error) {
+      this.winstonService.warn(`Failed to sync cleanup with backend: ${error}`);
+    }
   }
 
 
@@ -150,6 +193,11 @@ export class ProjectService {
 
 
 
+  private getContainerUrl(project: TempProjectType): string {
+    const port = 3000;
+    return `http://localhost:${port}`;
+  }
+
   private ensureDir(path: string): void {
     if (!existsSync(path)) {
       mkdirSync(path, { recursive: true });
@@ -164,21 +212,21 @@ export class ProjectService {
     writeFileSync(fullPath, content);
   }
 
-  private async buildImage(project: TempProjectType): Promise<void> {
+  private async buildImageService(project: TempProjectType): Promise<void> {
     this.winstonService.debug(`Building Docker image: ${project.imageName}`);
-    const result = await this.docker.buildImage({ path: project.path, tag: project.imageName });
+    const result = await this.dockerService.buildImage({ path: project.path, tag: project.imageName });
     if (!result.success) {
       throw new InternalServerErrorException("Failed to build Docker image");
     }
   }
 
-  private async syncToGitLab(project: TempProjectType): Promise<number> {
+  private async syncToGitLabService(project: TempProjectType): Promise<number> {
     this.winstonService.debug(`Syncing project ${project.id} to GitLab`);
     const projectName = `compiler-${project.modelId}-${project.graphId}`;
     
     let gitLabProjectId = this.configService.get<number>("core.gitlab.projectId", 0);
     if (gitLabProjectId === 0) {
-      const newProject = await this.gitLab.createProject({
+      const newProject = await this.gitLabService.createProject({
         name: projectName,
         description: `Compiler project for model ${project.modelId}, graph ${project.graphId}`,
         visibility: "private",
@@ -187,23 +235,23 @@ export class ProjectService {
     }
 
     // 📦 Git operations via terminal
-    await this.gitCmd(project.path, "init");
-    await this.gitCmd(project.path, "add", ".");
-    await this.gitCmd(project.path, "commit", "-m", `Compiler build for ${project.modelId}/${project.graphId}`);
+    await this.gitCmdService(project.path, "init");
+    await this.gitCmdService(project.path, "add", ".");
+    await this.gitCmdService(project.path, "commit", "-m", `Compiler build for ${project.modelId}/${project.graphId}`);
     
     return gitLabProjectId;
   }
 
-  private async gitCmd(cwd: string, ...args: string[]): Promise<void> {
-    const result = await this.terminal.execute({ command: "git", args, cwd });
+  private async gitCmdService(cwd: string, ...args: string[]): Promise<void> {
+    const result = await this.terminalService.execute({ command: "git", args, cwd });
     if (result.code !== 0) {
       this.winstonService.warn(`Git command failed: git ${args.join(" ")} — ${result.stderr}`);
     }
   }
 
-  private async triggerPipeline(project: TempProjectType, projectId: number): Promise<number> {
+  private async triggerPipelineService(project: TempProjectType, projectId: number): Promise<number> {
     try {
-      const pipeline = await this.gitLab.createPipeline(projectId, "main");
+      const pipeline = await this.gitLabService.createPipeline(projectId, "main");
       return pipeline.id;
     } catch (error) {
       this.winstonService.warn(`Failed to trigger GitLab pipeline: ${error}`);
