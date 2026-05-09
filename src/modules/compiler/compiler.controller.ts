@@ -1,8 +1,8 @@
-import { Controller, Post, Body, UseGuards } from "@nestjs/common";
+import { Controller, Post, Get, Body, Param, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "src/common/guards/auth.guard";
 import { ProjectService } from "../project/project.service";
 import type { CompileRequestType, NodeType } from "./types";
-import type { CompileResultType } from "../project/types";
+import type { CompileResultType, ContainerLogsType } from "../project/types";
 
 @UseGuards(AuthGuard)
 @Controller()
@@ -46,5 +46,11 @@ export class CompilerController {
     }
 
     return { success: false, message: "Failed to stop project" };
+  }
+
+  @Get("/logs")
+  async getLogs(@Body() data: { modelId: number; graphId: number }): Promise<ContainerLogsType | null> {
+    const { modelId, graphId } = data;
+    return await this.projectService.getContainerLogs(modelId, graphId);
   }
 }

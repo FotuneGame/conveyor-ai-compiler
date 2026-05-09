@@ -13,6 +13,7 @@ export type TempProjectType = {
   containerName: string;
   imageName: string;
   createdAt: Date;
+  gitLabPipelineId?: number;
 };
 
 export type CreateTempProjectType = {
@@ -40,4 +41,14 @@ export type ProjectConfigType = {
   tempDir: string;
   gitLabProjectId: number;
   dockerRegistry: string;
+};
+
+export type ContainerLogsType = {
+  pipelineId: number;
+  jobs: Array<{
+    id: number;
+    name: string;
+    status: string;
+    logs: string;
+  }>;
 };

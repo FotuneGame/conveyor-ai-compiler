@@ -15,6 +15,19 @@ export type GitLabPipelineType = {
   createdAt: Date;
 };
 
+export type GitLabJobType = {
+  id: number;
+  status: string;
+  stage: string;
+  name: string;
+  pipeline: {
+    id: number;
+    status: string;
+  };
+  createdAt: Date;
+  finishedAt?: Date;
+};
+
 export type CreateGitLabProjectType = {
   name: string;
   description?: string;

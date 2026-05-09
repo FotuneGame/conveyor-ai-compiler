@@ -8,7 +8,6 @@ import type {
   UpdateContainerStatusType,
   ContainerType,
   ContainerListResponseType,
-  ContainerLogsType,
   BackendConfigType,
 } from "./types";
 
@@ -42,7 +41,7 @@ export class BackendService {
     try {
       const response = await firstValueFrom(
         this.httpService.post<ContainerType>(
-          `${this.baseUrl}/compiler/models/${modelId}/containers`,
+          `${this.baseUrl}/api/compiler/models/${modelId}/containers`,
           data,
           { headers: this.getHeaders() }
         )
@@ -65,7 +64,7 @@ export class BackendService {
     try {
       const response = await firstValueFrom(
         this.httpService.patch<ContainerType>(
-          `${this.baseUrl}/compiler/models/${modelId}/containers/${containerId}`,
+          `${this.baseUrl}/api/compiler/models/${modelId}/containers/${containerId}`,
           data,
           { headers: this.getHeaders() }
         )
@@ -88,7 +87,7 @@ export class BackendService {
     try {
       const response = await firstValueFrom(
         this.httpService.patch<ContainerType>(
-          `${this.baseUrl}/compiler/models/${modelId}/containers/${containerId}`,
+          `${this.baseUrl}/api/compiler/models/${modelId}/containers/${containerId}`,
           data,
           { headers: this.getHeaders() }
         )
@@ -107,7 +106,7 @@ export class BackendService {
     try {
       await firstValueFrom(
         this.httpService.delete(
-          `${this.baseUrl}/compiler/models/${modelId}/containers/${containerId}`,
+          `${this.baseUrl}/api/compiler/models/${modelId}/containers/${containerId}`,
           { headers: this.getHeaders() }
         )
       );
@@ -125,7 +124,7 @@ export class BackendService {
     try {
       const response = await firstValueFrom(
         this.httpService.get<ContainerListResponseType>(
-          `${this.baseUrl}/compiler/models/${modelId}/containers`,
+          `${this.baseUrl}/api/compiler/models/${modelId}/containers`,
           { headers: this.getHeaders() }
         )
       );
@@ -137,27 +136,6 @@ export class BackendService {
     }
   }
 
-  async getContainerLogs(
-    modelId: number,
-    containerId: number
-  ): Promise<ContainerLogsType | null> {
-    this.logger.debug(`Getting logs for container ${containerId} of model ${modelId}`);
-
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get<ContainerLogsType>(
-          `${this.baseUrl}/compiler/models/${modelId}/containers/${containerId}/logs`,
-          { headers: this.getHeaders() }
-        )
-      );
-
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Failed to get container logs: ${error}`);
-      return null;
-    }
-  }
-
   getConfig(): BackendConfigType {
     return {
       baseUrl: this.baseUrl,
@@ -165,3 +143,4 @@ export class BackendService {
     };
   }
 }
+

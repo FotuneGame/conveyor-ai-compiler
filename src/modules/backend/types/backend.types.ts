@@ -30,10 +30,6 @@ export type ContainerListResponseType = {
   totalPages: number;
 };
 
-export type ContainerLogsType = {
-  logs: string;
-};
-
 export type BackendConfigType = {
   baseUrl: string;
   compilerSecret: string;

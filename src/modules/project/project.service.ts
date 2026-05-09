@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
 import { join, dirname } from "path";
@@ -8,7 +8,7 @@ import { TerminalService } from "../terminal/terminal.service";
 import { GitLabService } from "../gitlab/gitlab.service";
 import { TemplateService } from "../template/template.service";
 import { BackendService } from "../backend/backend.service";
-import type { TempProjectType, CreateTempProjectType, CompileResultType } from "./types";
+import type { TempProjectType, CreateTempProjectType, CompileResultType, ContainerLogsType } from "./types";
 
 @Injectable()
 export class ProjectService {
@@ -73,6 +73,9 @@ export class ProjectService {
       const gitLabProjectId = await this.syncToGitLabService(project);
       const pipelineId = await this.triggerPipelineService(project, gitLabProjectId);
 
+      // Сохраняем pipelineId в проекте
+      project.gitLabPipelineId = pipelineId;
+
       return {
         success: true,
         projectId: project.id,
@@ -119,6 +122,51 @@ export class ProjectService {
     } catch (error) {
       this.winstonService.error(`Failed to stop project ${projectId}: ${error}`);
       return false;
+    }
+  }
+
+  async getContainerLogs(modelId: number, graphId: number): Promise<ContainerLogsType | null> {
+    const project = this.findProjectByModelAndGraph(modelId, graphId);
+
+    if (!project) {
+      this.winstonService.warn(`Project not found for model ${modelId} and graph ${graphId}`);
+      return null;
+    }
+
+    if (!project.gitLabPipelineId) {
+      this.winstonService.warn(`No pipeline ID found for project ${project.id}`);
+      return null;
+    }
+
+    try {
+      const gitLabProjectId = this.configService.get<number>("core.gitlab.projectId", 0);
+      if (gitLabProjectId === 0) {
+        this.winstonService.warn("GitLab project ID not configured");
+        return null;
+      }
+
+      // Получаем jobs пайплайна
+      const jobs = await this.gitLabService.getPipelineJobs(gitLabProjectId, project.gitLabPipelineId);
+
+      const jobsWithLogs = await Promise.all(
+        jobs.map(async (job) => {
+          const logs = await this.gitLabService.getJobTrace(gitLabProjectId, job.id);
+          return {
+            id: job.id,
+            name: job.name,
+            status: job.status,
+            logs,
+          };
+        })
+      );
+
+      return {
+        pipelineId: project.gitLabPipelineId,
+        jobs: jobsWithLogs,
+      };
+    } catch (error) {
+      this.winstonService.error(`Failed to get container logs: ${error}`);
+      return null;
     }
   }
 
@@ -176,12 +224,6 @@ export class ProjectService {
   }
 
 
-
-
-  private getContainerUrl(project: TempProjectType): string {
-    const port = 3000;
-    return `http://localhost:${port}`;
-  }
 
   private ensureDir(path: string): void {
     if (!existsSync(path)) {

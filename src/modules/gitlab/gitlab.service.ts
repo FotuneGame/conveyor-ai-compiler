@@ -3,7 +3,7 @@ import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
 import { WinstonService } from "src/shared/logger/winston.service";
-import type { GitLabProjectType, GitLabPipelineType, CreateGitLabProjectType } from "./types";
+import type { GitLabProjectType, GitLabPipelineType, GitLabJobType, CreateGitLabProjectType } from "./types";
 
 @Injectable()
 export class GitLabService {
@@ -74,6 +74,45 @@ export class GitLabService {
     } catch (error) {
       this.winstonService.error(`Failed to create GitLab pipeline: ${error}`);
       throw new InternalServerErrorException("Failed to create GitLab pipeline");
+    }
+  }
+
+  async getPipelineJobs(projectId: number, pipelineId: number): Promise<GitLabJobType[]> {
+    this.winstonService.debug(`Getting jobs for pipeline ${pipelineId} in project ${projectId}`);
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<GitLabJobType[]>(
+          `${this.baseUrl}/api/v4/projects/${projectId}/pipelines/${pipelineId}/jobs`,
+          { headers: this.getHeaders() }
+        )
+      );
+
+      return response.data;
+    } catch (error) {
+      this.winstonService.error(`Failed to get pipeline jobs: ${error}`);
+      return [];
+    }
+  }
+
+  async getJobTrace(projectId: number, jobId: number): Promise<string> {
+    this.winstonService.debug(`Getting job trace for job ${jobId}`);
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `${this.baseUrl}/api/v4/projects/${projectId}/jobs/${jobId}/trace`,
+          { 
+            headers: this.getHeaders(),
+            responseType: 'text'
+          }
+        )
+      );
+
+      return response.data as string;
+    } catch (error) {
+      this.winstonService.error(`Failed to get job trace: ${error}`);
+      return "";
     }
   }
 
