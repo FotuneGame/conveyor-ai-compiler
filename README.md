@@ -117,8 +117,6 @@ COMPILER_SECRET=test-compiler-secret
 
 GITLAB_BASE_URL=https://gitlab.com
 GITLAB_TOKEN=your-gitlab-token-here
-GITLAB_PROJECT_ID=0
-GITLAB_NAMESPACE_ID=0
 
 DOCKER_REGISTRY=registry.gitlab.com
 

@@ -3,14 +3,12 @@ import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
 import { WinstonService } from "src/shared/logger/winston.service";
-import type { GitLabProjectType, GitLabPipelineType, CreateGitLabProjectType, GitLabConfigType} from "./types";
+import type { GitLabProjectType, GitLabPipelineType, CreateGitLabProjectType } from "./types";
 
 @Injectable()
 export class GitLabService {
   private readonly baseUrl: string;
   private readonly token: string;
-  private readonly projectId: number;
-  private readonly namespaceId: number;
 
   constructor(
     private readonly httpService: HttpService,
@@ -19,8 +17,6 @@ export class GitLabService {
   ) {
     this.baseUrl = this.configService.get<string>("core.gitlab.baseUrl", "https://gitlab.com");
     this.token = this.configService.get<string>("core.gitlab.token", "");
-    this.projectId = this.configService.get<number>("core.gitlab.projectId", 0);
-    this.namespaceId = this.configService.get<number>("core.gitlab.namespaceId", 0);
   }
 
   private getHeaders(): Record<string, string> {
@@ -43,10 +39,6 @@ export class GitLabService {
         payload.description = data.description;
       }
 
-      if (data.namespaceId) {
-        payload.namespace_id = data.namespaceId;
-      }
-
       const response = await firstValueFrom(
         this.httpService.post(`${this.baseUrl}/api/v4/projects`, payload, {
           headers: this.getHeaders(),
@@ -57,38 +49,6 @@ export class GitLabService {
     } catch (error) {
       this.winstonService.error(`Failed to create GitLab project: ${error}`);
       throw new InternalServerErrorException("Failed to create GitLab project");
-    }
-  }
-
-  async getProject(projectId: number): Promise<GitLabProjectType> {
-    this.winstonService.debug(`Getting GitLab project: ${projectId}`);
-
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/api/v4/projects/${projectId}`, {
-          headers: this.getHeaders(),
-        })
-      );
-
-      return this.mapProject(response.data);
-    } catch (error) {
-      this.winstonService.error(`Failed to get GitLab project: ${error}`);
-      throw new InternalServerErrorException("Failed to get GitLab project");
-    }
-  }
-
-  async deleteProject(projectId: number): Promise<void> {
-    this.winstonService.debug(`Deleting GitLab project: ${projectId}`);
-
-    try {
-      await firstValueFrom(
-        this.httpService.delete(`${this.baseUrl}/api/v4/projects/${projectId}`, {
-          headers: this.getHeaders(),
-        })
-      );
-    } catch (error) {
-      this.winstonService.error(`Failed to delete GitLab project: ${error}`);
-      throw new InternalServerErrorException("Failed to delete GitLab project");
     }
   }
 
@@ -109,33 +69,6 @@ export class GitLabService {
       this.winstonService.error(`Failed to create GitLab pipeline: ${error}`);
       throw new InternalServerErrorException("Failed to create GitLab pipeline");
     }
-  }
-
-  async getPipeline(projectId: number, pipelineId: number): Promise<GitLabPipelineType> {
-    this.winstonService.debug(`Getting GitLab pipeline: ${pipelineId}`);
-
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get(
-          `${this.baseUrl}/api/v4/projects/${projectId}/pipelines/${pipelineId}`,
-          { headers: this.getHeaders() }
-        )
-      );
-
-      return this.mapPipeline(response.data);
-    } catch (error) {
-      this.winstonService.error(`Failed to get GitLab pipeline: ${error}`);
-      throw new InternalServerErrorException("Failed to get GitLab pipeline");
-    }
-  }
-
-  getConfig(): GitLabConfigType {
-    return {
-      baseUrl: this.baseUrl,
-      token: this.token,
-      projectId: this.projectId,
-      namespaceId: this.namespaceId,
-    };
   }
 
   private mapProject(data: Record<string, unknown>): GitLabProjectType {
