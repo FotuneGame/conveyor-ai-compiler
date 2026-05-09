@@ -1,17 +1,14 @@
-import { Injectable, Logger, InternalServerErrorException } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
 import type {
   CreateContainerType,
-  UpdateContainerType,
   ContainerType,
   ContainerListResponseType,
   ContainerLogsType,
   BackendConfigType,
 } from "./types";
-
-
 
 @Injectable()
 export class BackendService {
@@ -52,29 +49,6 @@ export class BackendService {
       return response.data;
     } catch (error) {
       this.logger.error(`Failed to create container: ${error}`);
-      return null;
-    }
-  }
-
-  async updateContainer(
-    modelId: number,
-    containerId: number,
-    data: UpdateContainerType
-  ): Promise<ContainerType | null> {
-    this.logger.debug(`Updating container ${containerId} for model ${modelId}`);
-
-    try {
-      const response = await firstValueFrom(
-        this.httpService.patch<ContainerType>(
-          `${this.baseUrl}/api/compiler/models/${modelId}/containers/${containerId}`,
-          data,
-          { headers: this.getHeaders() }
-        )
-      );
-
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Failed to update container: ${error}`);
       return null;
     }
   }

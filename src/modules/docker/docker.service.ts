@@ -1,37 +1,22 @@
 import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { HttpService } from "@nestjs/axios";
-import { firstValueFrom } from 'rxjs';
 import { WinstonService } from "src/shared/logger/winston.service";
 import { TerminalService } from "../terminal/terminal.service";
 import type { DockerImageType, DockerContainerType, BuildImageType, RunContainerType, StopContainerType, RemoveContainerType, RemoveImageType } from "./types";
 
 
-//TODO: ДОПИСАТЬ СОЗДАНИЕ УДАЛЕНИЕ И ОБНОВЛЕНИЕ КОНТЕЙНЕРОВ НА БЕКЕ
-/*
-  Post /compiler/models/:modelId/containers
-  В body: name, logsUrl, dockerUrl, endpointUrl.
-  Patch /compiler/models/:modelId/containers/:id
-  В body: name, logsUrl, dockerUrl, endpointUrl, active.
-  Delete /compiler/models/:modelId/containers/:id
-*/
+
 @Injectable()
 export class DockerService {
   private readonly registry: string;
-  private readonly secret: string;
-  private readonly backendUrl: string;
 
   constructor(
-    private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly winstonService: WinstonService,
     private readonly terminalService: TerminalService,
   ) {
-    this.backendUrl =this.configService.get<string>('core.backendUrl', 'http://localhost:5000').replace(/\/+$/, '');;
     this.registry = this.configService.get<string>("core.docker.registry", "registry.gitlab.com");
-    this.secret = this.configService.get<string>("passport.compiler.secret", "test-compiler-secret");
   }
-
 
   formatImageName(imageName: string): string {
     if (imageName.includes("/")) {
@@ -257,31 +242,5 @@ export class DockerService {
       return "";
     }
   }
-
-  async containerExists(containerName: string): Promise<boolean> {
-    try {
-      const result = await this.terminalService.execute({
-        command: "docker",
-        args: ["ps", "-a", "--filter", `name=^${containerName}$`, "--format", "{{.Names}}"],
-      });
-
-      return result.stdout.trim() === containerName;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  async getImageExists(imageTag: string): Promise<boolean> {
-    const fullTag = this.formatImageName(imageTag);
-    try {
-      const result = await this.terminalService.execute({
-        command: "docker",
-        args: ["images", fullTag, "--format", "{{.Repository}}:{{.Tag}}"],
-      });
-      return result.stdout.trim() === fullTag || result.stdout.trim() === imageTag;
-    } catch {
-      return false;
-    }
-  }
-  
 }
+

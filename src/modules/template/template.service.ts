@@ -8,10 +8,6 @@ export class TemplateService {
     private readonly winstonService: WinstonService
   ) {}
 
-  /**
-   * Генерирует массив файлов для проекта на основе контекста
-   * НЕ работает с файловой системой — только чистая генерация
-   */
   generateFiles(context: TemplateContextType): GeneratedFileType[] {
     this.winstonService.debug(`Generating files for model ${context.model.id}/graph ${context.graph.id}`);
 
@@ -36,9 +32,6 @@ export class TemplateService {
     
     return `${baseEnv}\n${customLines}`;
   }
-
-
-
 
   private generateEnv(ctx: TemplateContextType): string {
     const { model, graph } = ctx;

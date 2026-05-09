@@ -110,26 +110,18 @@ export class ProjectService {
       return false;
     }
 
-    try {
-      await this.dockerService.stopContainer({ containerId: project.containerName });
-      await this.dockerService.removeContainer({ containerId: project.containerName, force: true });
-      await this.dockerService.removeImage({ imageId: project.imageName, force: true });
+    this.winstonService.debug(`Stopping project: ${projectId}`);
 
-      // 🔄 Обновляем статус контейнера в backend
-      const modelId = parseInt(project.modelId, 10);
-      const containers = await this.backendService.getContainers(modelId);
-      if (containers?.data) {
-        const backendContainer = containers.data.find((c) => c.name === project.containerName);
-        if (backendContainer) {
-          await this.backendService.updateContainer(modelId, backendContainer.id, { active: false });
-        }
-      }
+    // 🧹 Безопасная очистка с игнорированием ошибок
+    await this.safeDockerOp(() => this.dockerService.stopContainer({ containerId: project.containerName }));
+    await this.safeDockerOp(() => this.dockerService.removeContainer({ containerId: project.containerName, force: true }));
+    await this.safeDockerOp(() => this.dockerService.removeImage({ imageId: project.imageName, force: true }));
+    
+    // 🔄 Синхронизация состояния контейнеров с backend
+    await this.syncCleanupWithBackend(project);
 
-      return true;
-    } catch (error) {
-      this.winstonService.error(`Failed to stop project ${projectId}: ${error}`);
-      return false;
-    }
+    this.projects.delete(projectId);
+    return true;
   }
 
   async cleanupProject(projectId: string): Promise<void> {
@@ -142,7 +134,7 @@ export class ProjectService {
     await this.safeDockerOp(() => this.dockerService.stopContainer({ containerId: project.containerName }));
     await this.safeDockerOp(() => this.dockerService.removeContainer({ containerId: project.containerName, force: true }));
     await this.safeDockerOp(() => this.dockerService.removeImage({ imageId: project.imageName, force: true }));
-    
+
     // 🔄 Синхронизация состояния контейнеров с backend
     await this.syncCleanupWithBackend(project);
 

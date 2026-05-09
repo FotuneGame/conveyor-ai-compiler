@@ -3,7 +3,7 @@ import { HttpService } from "@nestjs/axios";
 import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
 import { WinstonService } from "src/shared/logger/winston.service";
-import type { GitLabProjectType, GitLabCommitType, GitLabPipelineType, CreateGitLabProjectType, GitLabConfigType} from "./types";
+import type { GitLabProjectType, GitLabPipelineType, CreateGitLabProjectType, GitLabConfigType} from "./types";
 
 @Injectable()
 export class GitLabService {
@@ -129,30 +129,6 @@ export class GitLabService {
     }
   }
 
-  async getLastCommits(projectId: number, ref: string = "main"): Promise<GitLabCommitType[]> {
-    this.winstonService.debug(`Getting last commits for project ${projectId}`);
-
-    try {
-      const response = await firstValueFrom(
-        this.httpService.get(
-          `${this.baseUrl}/api/v4/projects/${projectId}/repository/commits?ref_name=${ref}`,
-          { headers: this.getHeaders() }
-        )
-      );
-
-      return response.data.map((commit: unknown) => this.mapCommit(commit));
-    } catch (error) {
-      this.winstonService.error(`Failed to get commits: ${error}`);
-      throw new InternalServerErrorException("Failed to get commits");
-    }
-  }
-
-
-
-  getProjectHttpUrl(projectId: number): string {
-    return `${this.baseUrl}/api/v4/projects/${projectId}/repository/archive.zip`;
-  }
-
   getConfig(): GitLabConfigType {
     return {
       baseUrl: this.baseUrl,
@@ -162,9 +138,6 @@ export class GitLabService {
     };
   }
 
-
-
-  
   private mapProject(data: Record<string, unknown>): GitLabProjectType {
     return {
       id: data.id as number,
@@ -185,17 +158,5 @@ export class GitLabService {
       createdAt: new Date(data.created_at as string),
     };
   }
-
-  private mapCommit(data: unknown): GitLabCommitType {
-    const commit = data as Record<string, unknown>;
-    return {
-      id: commit.id as string,
-      short_id: commit.short_id as string,
-      title: commit.title as string,
-      message: commit.message as string,
-      author_name: commit.author_name as string,
-      author_email: commit.author_email as string,
-      created_at: new Date(commit.created_at as string),
-    };
-  }
 }
+

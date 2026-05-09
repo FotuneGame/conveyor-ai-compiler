@@ -6,16 +6,6 @@ export type GitLabProjectType = {
   httpUrlToRepo: string;
 };
 
-export type GitLabCommitType = {
-  id: string;
-  short_id: string;
-  title: string;
-  message: string;
-  author_name: string;
-  author_email: string;
-  created_at: Date;
-};
-
 export type GitLabPipelineType = {
   id: number;
   status: string;

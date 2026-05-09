@@ -1,9 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import { exec, spawn } from "child_process";
+import { spawn } from "child_process";
 import { WinstonService } from "src/shared/logger/winston.service";
 import type { TerminalExecResultType, TerminalCommandType } from "./types";
-
-
 
 @Injectable()
 export class TerminalService {
@@ -15,8 +13,6 @@ export class TerminalService {
     const { command: cmd, args = [], cwd, env = {} } = command;
 
     this.winstonService.debug(`Executing command: ${cmd} ${args.join(" ")}`);
-
-    const fullCommand = args.length > 0 ? `${cmd} ${args.join(" ")}` : cmd;
 
     return new Promise((resolve, reject) => {
       const options: Record<string, unknown> = { cwd };
@@ -49,25 +45,6 @@ export class TerminalService {
       child.on("error", (error: Error) => {
         this.winstonService.error(`Command error: ${error.message}`);
         reject(error);
-      });
-    });
-  }
-
-  async executeSimple(command: string, cwd?: string): Promise<TerminalExecResultType> {
-    this.winstonService.debug(`Executing simple command: ${command}`);
-
-    return new Promise((resolve, reject) => {
-      exec(command, { cwd }, (error: Error | null, stdout: string, stderr: string) => {
-        if (error) {
-          this.winstonService.error(`Command error: ${error.message}`);
-          reject(error);
-          return;
-        }
-        resolve({
-          code: 0,
-          stdout: stdout || "",
-          stderr: stderr || "",
-        });
       });
     });
   }
