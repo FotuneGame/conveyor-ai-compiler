@@ -12,7 +12,7 @@ export class EnvConfigService {
   ) {}
 
   async getDefaultEnvConfig(): Promise<EnvConfigType> {
-    const envPath = this.configService.get<string>("core.compiler.envPath", process.cwd());
+    const envPath = this.configService.get<string>("core.compiler.envPath", './public/example.env');
 
     this.winstonService.debug(`Reading default env from: ${envPath}`);
 

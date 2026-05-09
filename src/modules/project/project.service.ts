@@ -25,7 +25,7 @@ export class ProjectService {
     private readonly docker: DockerService,
     private readonly template: TemplateService,
   ) {
-    this.tempDir = this.configService.get<string>("core.compiler.tempDir", "/tmp/compiler-projects");
+    this.tempDir = this.configService.get<string>("core.compiler.tempDir", "./tmp/compiler-projects");
   }
 
   async createTempProject(data: CreateTempProjectType): Promise<TempProjectType> {

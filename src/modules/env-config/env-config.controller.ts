@@ -2,7 +2,7 @@ import { Controller, Get } from "@nestjs/common";
 import { EnvConfigService } from "./env-config.service";
 import type { EnvConfigType } from "./types";
 
-@Controller("env-config")
+@Controller()
 export class EnvConfigController {
   constructor(private readonly envConfigService: EnvConfigService) {}
 

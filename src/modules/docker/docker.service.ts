@@ -1,31 +1,63 @@
 import { Injectable, InternalServerErrorException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { HttpService } from "@nestjs/axios";
+import { firstValueFrom } from 'rxjs';
 import { WinstonService } from "src/shared/logger/winston.service";
 import { TerminalService } from "../terminal/terminal.service";
-import type {DockerImageType, DockerContainerType, BuildImageType, RunContainerType, StopContainerType, RemoveContainerType, RemoveImageType } from "./types";
+import type { DockerImageType, DockerContainerType, BuildImageType, RunContainerType, StopContainerType, RemoveContainerType, RemoveImageType } from "./types";
 
+
+//TODO: ДОПИСАТЬ СОЗДАНИЕ УДАЛЕНИЕ И ОБНОВЛЕНИЕ КОНТЕЙНЕРОВ НА БЕКЕ
+/*
+  Post /compiler/models/:modelId/containers
+  В body: name, logsUrl, dockerUrl, endpointUrl.
+  Patch /compiler/models/:modelId/containers/:id
+  В body: name, logsUrl, dockerUrl, endpointUrl, active.
+  Delete /compiler/models/:modelId/containers/:id
+*/
 @Injectable()
 export class DockerService {
+  private readonly registry: string;
+  private readonly secret: string;
+  private readonly backendUrl: string;
+
   constructor(
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService,
     private readonly winstonService: WinstonService,
     private readonly terminalService: TerminalService,
-  ) {}
+  ) {
+    this.backendUrl =this.configService.get<string>('core.backendUrl', 'http://localhost:5000').replace(/\/+$/, '');;
+    this.registry = this.configService.get<string>("core.docker.registry", "registry.gitlab.com");
+    this.secret = this.configService.get<string>("passport.compiler.secret", "test-compiler-secret");
+  }
+
+
+  formatImageName(imageName: string): string {
+    if (imageName.includes("/")) {
+      return imageName;
+    }
+    return `${this.registry}/${imageName}`;
+  }
+
+  stripRegistry(imageName: string): string {
+    return imageName.replace(new RegExp(`^${this.registry}/`), "");
+  }
 
   async buildImage(data: BuildImageType): Promise<{ success: boolean; imageId: string }> {
     const { path, tag, dockerfileName = "Dockerfile", buildArgs = {} } = data;
+    
+    const fullTag = this.formatImageName(tag);
+    this.winstonService.debug(`Building Docker image: ${fullTag} from ${path}`);
 
-    this.winstonService.debug(`Building Docker image: ${tag} from ${path}`);
-
-    let args = ["build", "-t", tag, "-f", dockerfileName, path];
+    let args = ["build", "-t", fullTag, "-f", dockerfileName, path];
 
     for (const [key, value] of Object.entries(buildArgs)) {
       args = [...args, "--build-arg", `${key}=${value}`];
     }
 
     try {
-      const result = await this.terminalService.execute({
-        command: "docker",
-        args,
-      });
+      const result = await this.terminalService.execute({ command: "docker", args });
 
       if (result.code !== 0) {
         this.winstonService.error(`Docker build failed: ${result.stderr}`);
@@ -40,48 +72,67 @@ export class DockerService {
     }
   }
 
-  async runContainer(data: RunContainerType): Promise<{ success: boolean; containerId: string }> {
-    const { image, name, env = {}, ports = {}, volumes = {}, network, restartPolicy } = data;
-
-    this.winstonService.debug(`Running Docker container: ${name}`);
-
-    const args = ["run", "-d", "--name", name];
-
-    for (const [key, value] of Object.entries(env)) {
-      args.push("-e", `${key}=${value}`);
-    }
-
-    for (const [hostPort, containerPort] of Object.entries(ports)) {
-      args.push("-p", `${hostPort}:${containerPort}`);
-    }
-
-    for (const [hostPath, containerPath] of Object.entries(volumes)) {
-      args.push("-v", `${hostPath}:${containerPath}`);
-    }
-
-    if (network) {
-      args.push("--network", network);
-    }
-
-    if (restartPolicy) {
-      args.push("--restart", restartPolicy);
-    }
-
-    args.push(image);
+  async pushImage(imageTag: string): Promise<boolean> {
+    const fullTag = this.formatImageName(imageTag);
+    this.winstonService.debug(`Pushing Docker image: ${fullTag}`);
 
     try {
       const result = await this.terminalService.execute({
         command: "docker",
-        args,
+        args: ["push", fullTag],
       });
 
+      if (result.code !== 0) {
+        this.winstonService.error(`Docker push failed: ${result.stderr}`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      this.winstonService.error(`Failed to push Docker image: ${error}`);
+      return false;
+    }
+  }
+
+  async pullImage(imageTag: string): Promise<boolean> {
+    const fullTag = this.formatImageName(imageTag);
+    this.winstonService.debug(`Pulling Docker image: ${fullTag}`);
+
+    try {
+      const result = await this.terminalService.execute({
+        command: "docker",
+        args: ["pull", fullTag],
+      });
+      return result.code === 0;
+    } catch (error) {
+      this.winstonService.error(`Failed to pull Docker image: ${error}`);
+      return false;
+    }
+  }
+
+  async runContainer(data: RunContainerType): Promise<{ success: boolean; containerId: string }> {
+    const { image, name, env = {}, ports = {}, volumes = {}, network, restartPolicy } = data;
+    
+    // 🎯 Применяем реестр к имени образа, если он "простой"
+    const fullImage = this.formatImageName(image);
+    this.winstonService.debug(`Running Docker container: ${name} from ${fullImage}`);
+
+    const args = ["run", "-d", "--name", name];
+
+    for (const [key, value] of Object.entries(env)) args.push("-e", `${key}=${value}`);
+    for (const [hostPort, containerPort] of Object.entries(ports)) args.push("-p", `${hostPort}:${containerPort}`);
+    for (const [hostPath, containerPath] of Object.entries(volumes)) args.push("-v", `${hostPath}:${containerPath}`);
+    if (network) args.push("--network", network);
+    if (restartPolicy) args.push("--restart", restartPolicy);
+
+    args.push(fullImage); // 👈 используем полное имя
+
+    try {
+      const result = await this.terminalService.execute({ command: "docker", args });
       if (result.code !== 0) {
         this.winstonService.error(`Docker run failed: ${result.stderr}`);
         throw new InternalServerErrorException("Docker run failed");
       }
-
-      const containerId = result.stdout.trim();
-      return { success: true, containerId };
+      return { success: true, containerId: result.stdout.trim() };
     } catch (error) {
       this.winstonService.error(`Failed to run Docker container: ${error}`);
       throw new InternalServerErrorException("Failed to run Docker container");
@@ -90,20 +141,11 @@ export class DockerService {
 
   async stopContainer(data: StopContainerType): Promise<boolean> {
     const { containerId, timeout } = data;
-
     this.winstonService.debug(`Stopping Docker container: ${containerId}`);
-
     const args = ["stop", containerId];
-    if (timeout !== undefined) {
-      args.push("-t", timeout.toString());
-    }
-
+    if (timeout !== undefined) args.push("-t", timeout.toString());
     try {
-      const result = await this.terminalService.execute({
-        command: "docker",
-        args,
-      });
-
+      const result = await this.terminalService.execute({ command: "docker", args });
       return result.code === 0;
     } catch (error) {
       this.winstonService.error(`Failed to stop Docker container: ${error}`);
@@ -113,21 +155,10 @@ export class DockerService {
 
   async removeContainer(data: RemoveContainerType): Promise<boolean> {
     const { containerId, force = false } = data;
-
     this.winstonService.debug(`Removing Docker container: ${containerId}`);
-
-    const args = ["rm"];
-    if (force) {
-      args.push("-f");
-    }
-    args.push(containerId);
-
+    const args = ["rm", ...(force ? ["-f"] : []), containerId];
     try {
-      const result = await this.terminalService.execute({
-        command: "docker",
-        args,
-      });
-
+      const result = await this.terminalService.execute({ command: "docker", args });
       return result.code === 0;
     } catch (error) {
       this.winstonService.error(`Failed to remove Docker container: ${error}`);
@@ -137,21 +168,11 @@ export class DockerService {
 
   async removeImage(data: RemoveImageType): Promise<boolean> {
     const { imageId, force = false } = data;
-
-    this.winstonService.debug(`Removing Docker image: ${imageId}`);
-
-    const args = ["rmi"];
-    if (force) {
-      args.push("-f");
-    }
-    args.push(imageId);
-
+    const fullTag = this.formatImageName(imageId);
+    this.winstonService.debug(`Removing Docker image: ${fullTag}`);
+    const args = ["rmi", ...(force ? ["-f"] : []), fullTag];
     try {
-      const result = await this.terminalService.execute({
-        command: "docker",
-        args,
-      });
-
+      const result = await this.terminalService.execute({ command: "docker", args });
       return result.code === 0;
     } catch (error) {
       this.winstonService.error(`Failed to remove Docker image: ${error}`);
@@ -221,13 +242,13 @@ export class DockerService {
     }
   }  
 
-  async getContainerLogs(containerId: string, tail: number = 100): Promise<string> {
-    this.winstonService.debug(`Getting logs for container: ${containerId}`);
+  async getContainerLogs(id: string, tail: number = 100): Promise<string> {
+    this.winstonService.debug(`Getting logs for container: ${id}`);
 
     try {
       const result = await this.terminalService.execute({
         command: "docker",
-        args: ["logs", "-n", tail.toString(), containerId],
+        args: ["logs", "-n", tail.toString(), id],
       });
 
       return result.stdout + result.stderr;
@@ -251,15 +272,16 @@ export class DockerService {
   }
 
   async getImageExists(imageTag: string): Promise<boolean> {
+    const fullTag = this.formatImageName(imageTag);
     try {
       const result = await this.terminalService.execute({
         command: "docker",
-        args: ["images", imageTag, "--format", "{{.Repository}}:{{.Tag}}"],
+        args: ["images", fullTag, "--format", "{{.Repository}}:{{.Tag}}"],
       });
-
-      return result.stdout.trim() === imageTag;
-    } catch (error) {
+      return result.stdout.trim() === fullTag || result.stdout.trim() === imageTag;
+    } catch {
       return false;
     }
   }
+  
 }

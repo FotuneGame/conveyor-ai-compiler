@@ -100,6 +100,8 @@ LOG_MAX_SIZE=5242880
 LOG_MAX_FILES=5
 LOG_MAX_DAYS=30
 
+BACKEND_URL=http://localhost:5000
+
 SWAGGER_TITLE="API Documentation"
 SWAGGER_DESCRIPTION="API для работы курсовой"
 SWAGGER_VERSION=1.0
@@ -108,9 +110,42 @@ SWAGGER_CONTACT_NAME="Developer"
 SWAGGER_CONTACT_URL=https://vk.com/id244759286
 SWAGGER_CONTACT_EMAIL=titovgrisha04@gmail.com
 
-
 MAX_REQUESTS_TTL_MS=5000
 MAX_REQUESTS_LIMIT=10
 
 COMPILER_SECRET=test-compiler-secret
+
+GITLAB_BASE_URL=https://gitlab.com
+GITLAB_TOKEN=your-gitlab-token-here
+GITLAB_PROJECT_ID=0
+GITLAB_NAMESPACE_ID=0
+
+DOCKER_REGISTRY=registry.gitlab.com
+
+COMPILER_TEMP_DIR=./tmp/compiler-projects
+ENV_PATH=./public/example.env
+```
+
+## Example Environment Variables for builded project
+
+Create a /public/example.env file in the root directory with the following structure:
+
+```bash
+# Application Configuration
+PORT=3000
+NODE_ENV=production
+URL_CORS=http://localhost:3000 https://localhost:3000
+
+# Logging Configuration
+LOG_LEVEL=info
+LOG_PATH=logs
+LOG_MAX_SIZE=5242880
+LOG_MAX_FILES=5
+LOG_MAX_DAYS=30
+
+# Security Configuration
+HASH_ROUNDS=12
+MAX_REQUESTS_TTL_MS=5000
+MAX_REQUESTS_LIMIT=10
+
 ```
