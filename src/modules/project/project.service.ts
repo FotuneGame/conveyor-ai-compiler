@@ -6,12 +6,9 @@ import { rmSync, mkdirSync, existsSync, writeFileSync } from "fs";
 import { WinstonService } from "src/shared/logger/winston.service";
 import { TerminalService } from "../terminal/terminal.service";
 import { GitLabService } from "../gitlab/gitlab.service";
-import { DockerService } from "../docker/docker.service";
 import { TemplateService } from "../template/template.service";
 import { BackendService } from "../backend/backend.service";
 import type { TempProjectType, CreateTempProjectType, CompileResultType } from "./types";
-
-
 
 @Injectable()
 export class ProjectService {
@@ -23,7 +20,6 @@ export class ProjectService {
     private readonly winstonService: WinstonService,
     private readonly terminalService: TerminalService,
     private readonly gitLabService: GitLabService,
-    private readonly dockerService: DockerService,
     private readonly templateService: TemplateService,
     private readonly backendService: BackendService,
   ) {
@@ -73,19 +69,9 @@ export class ProjectService {
     }
 
     try {
-      await this.buildImageService(project);
+      // 🔄 Синхронизируем с GitLab - сборка будет в CI/CD
       const gitLabProjectId = await this.syncToGitLabService(project);
       const pipelineId = await this.triggerPipelineService(project, gitLabProjectId);
-
-      // 🔄 Создаем запись о контейнере в backend
-      const modelId = parseInt(project.modelId, 10);
-      const containerUrl = this.getContainerUrl(project);
-      await this.backendService.createContainer(modelId, {
-        name: project.containerName,
-        logsUrl: `${containerUrl}/logs`,
-        dockerUrl: containerUrl,
-        endpointUrl: containerUrl,
-      });
 
       return {
         success: true,
@@ -112,16 +98,28 @@ export class ProjectService {
 
     this.winstonService.debug(`Stopping project: ${projectId}`);
 
-    // 🧹 Безопасная очистка с игнорированием ошибок
-    await this.safeDockerOp(() => this.dockerService.stopContainer({ containerId: project.containerName }));
-    await this.safeDockerOp(() => this.dockerService.removeContainer({ containerId: project.containerName, force: true }));
-    await this.safeDockerOp(() => this.dockerService.removeImage({ imageId: project.imageName, force: true }));
-    
-    // 🔄 Синхронизация состояния контейнеров с backend
-    await this.syncCleanupWithBackend(project);
+    try {
+      // 🔄 Останавливаем контейнер через GitLab CI/CD pipeline (cleanup stage)
+      const gitLabProjectId = this.configService.get<number>("core.gitlab.projectId", 0);
+      if (gitLabProjectId === 0) {
+        this.winstonService.warn("GitLab project ID not configured, cannot stop container via GitLab");
+        return false;
+      }
 
-    this.projects.delete(projectId);
-    return true;
+      // Запускаем pipeline с cleanup stage через переменную STOP_CONTAINER
+      await this.gitLabService.createPipeline(gitLabProjectId, "main", {
+        STOP_CONTAINER: "true",
+      });
+
+      // Синхронизация с backend
+      await this.syncCleanupWithBackend(project);
+
+      this.projects.delete(projectId);
+      return true;
+    } catch (error) {
+      this.winstonService.error(`Failed to stop project ${projectId}: ${error}`);
+      return false;
+    }
   }
 
   async cleanupProject(projectId: string): Promise<void> {
@@ -129,11 +127,6 @@ export class ProjectService {
     if (!project) return;
 
     this.winstonService.debug(`Cleaning up project: ${projectId}`);
-
-    // 🧹 Безопасная очистка с игнорированием ошибок
-    await this.safeDockerOp(() => this.dockerService.stopContainer({ containerId: project.containerName }));
-    await this.safeDockerOp(() => this.dockerService.removeContainer({ containerId: project.containerName, force: true }));
-    await this.safeDockerOp(() => this.dockerService.removeImage({ imageId: project.imageName, force: true }));
 
     // 🔄 Синхронизация состояния контейнеров с backend
     await this.syncCleanupWithBackend(project);
@@ -153,8 +146,8 @@ export class ProjectService {
       if (containers?.data) {
         const backendContainer = containers.data.find((c) => c.name === project.containerName);
         if (backendContainer) {
-          this.winstonService.debug(`Removing container ${backendContainer.id} from backend for model ${modelId}`);
-          await this.backendService.deleteContainer(modelId, backendContainer.id);
+          this.winstonService.debug(`Updating container ${backendContainer.id} to inactive in backend for model ${modelId}`);
+          await this.backendService.updateContainer(modelId, backendContainer.id, { active: false });
         }
       }
     } catch (error) {
@@ -204,14 +197,6 @@ export class ProjectService {
     writeFileSync(fullPath, content);
   }
 
-  private async buildImageService(project: TempProjectType): Promise<void> {
-    this.winstonService.debug(`Building Docker image: ${project.imageName}`);
-    const result = await this.dockerService.buildImage({ path: project.path, tag: project.imageName });
-    if (!result.success) {
-      throw new InternalServerErrorException("Failed to build Docker image");
-    }
-  }
-
   private async syncToGitLabService(project: TempProjectType): Promise<number> {
     this.winstonService.debug(`Syncing project ${project.id} to GitLab`);
     const projectName = `compiler-${project.modelId}-${project.graphId}`;
@@ -248,14 +233,6 @@ export class ProjectService {
     } catch (error) {
       this.winstonService.warn(`Failed to trigger GitLab pipeline: ${error}`);
       return 0;
-    }
-  }
-
-  private async safeDockerOp(op: () => Promise<boolean>): Promise<void> {
-    try {
-      await op();
-    } catch (error) {
-      this.winstonService.warn(`Docker operation failed: ${error}`);
     }
   }
 

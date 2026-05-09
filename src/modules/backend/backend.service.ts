@@ -4,6 +4,8 @@ import { ConfigService } from "@nestjs/config";
 import { firstValueFrom } from "rxjs";
 import type {
   CreateContainerType,
+  UpdateContainerType,
+  UpdateContainerStatusType,
   ContainerType,
   ContainerListResponseType,
   ContainerLogsType,
@@ -40,7 +42,7 @@ export class BackendService {
     try {
       const response = await firstValueFrom(
         this.httpService.post<ContainerType>(
-          `${this.baseUrl}/api/compiler/models/${modelId}/containers`,
+          `${this.baseUrl}/compiler/models/${modelId}/containers`,
           data,
           { headers: this.getHeaders() }
         )
@@ -53,13 +55,59 @@ export class BackendService {
     }
   }
 
+  async updateContainer(
+    modelId: number,
+    containerId: number,
+    data: UpdateContainerType
+  ): Promise<ContainerType | null> {
+    this.logger.debug(`Updating container ${containerId} for model ${modelId}`);
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.patch<ContainerType>(
+          `${this.baseUrl}/compiler/models/${modelId}/containers/${containerId}`,
+          data,
+          { headers: this.getHeaders() }
+        )
+      );
+
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Failed to update container: ${error}`);
+      return null;
+    }
+  }
+
+  async updateContainerStatus(
+    modelId: number,
+    containerId: number,
+    data: UpdateContainerStatusType
+  ): Promise<ContainerType | null> {
+    this.logger.debug(`Updating container ${containerId} status for model ${modelId}`);
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.patch<ContainerType>(
+          `${this.baseUrl}/compiler/models/${modelId}/containers/${containerId}`,
+          data,
+          { headers: this.getHeaders() }
+        )
+      );
+
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Failed to update container status: ${error}`);
+      return null;
+    }
+  }
+
   async deleteContainer(modelId: number, containerId: number): Promise<boolean> {
     this.logger.debug(`Deleting container ${containerId} for model ${modelId}`);
 
     try {
       await firstValueFrom(
         this.httpService.delete(
-          `${this.baseUrl}/api/compiler/models/${modelId}/containers/${containerId}`,
+          `${this.baseUrl}/compiler/models/${modelId}/containers/${containerId}`,
           { headers: this.getHeaders() }
         )
       );
@@ -77,7 +125,7 @@ export class BackendService {
     try {
       const response = await firstValueFrom(
         this.httpService.get<ContainerListResponseType>(
-          `${this.baseUrl}/api/compiler/models/${modelId}/containers`,
+          `${this.baseUrl}/compiler/models/${modelId}/containers`,
           { headers: this.getHeaders() }
         )
       );
@@ -98,7 +146,7 @@ export class BackendService {
     try {
       const response = await firstValueFrom(
         this.httpService.get<ContainerLogsType>(
-          `${this.baseUrl}/api/compiler/models/${modelId}/containers/${containerId}/logs`,
+          `${this.baseUrl}/compiler/models/${modelId}/containers/${containerId}/logs`,
           { headers: this.getHeaders() }
         )
       );

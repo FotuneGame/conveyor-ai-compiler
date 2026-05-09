@@ -118,8 +118,6 @@ COMPILER_SECRET=test-compiler-secret
 GITLAB_BASE_URL=https://gitlab.com
 GITLAB_TOKEN=your-gitlab-token-here
 
-DOCKER_REGISTRY=registry.gitlab.com
-
 COMPILER_TEMP_DIR=./tmp/compiler-projects
 ENV_PATH=./public/example.env
 ```

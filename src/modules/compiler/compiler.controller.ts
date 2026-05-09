@@ -1,10 +1,8 @@
 import { Controller, Post, Body, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "src/common/guards/auth.guard";
 import { ProjectService } from "../project/project.service";
-import type { CompileRequestType, StopRequestType, NodeType } from "./types";
+import type { CompileRequestType, NodeType } from "./types";
 import type { CompileResultType } from "../project/types";
-
-
 
 @UseGuards(AuthGuard)
 @Controller()
@@ -12,7 +10,6 @@ export class CompilerController {
   constructor(
     private readonly projectService: ProjectService,
   ) {}
-
 
   @Post("/compilate")
   async compile(@Body() data: CompileRequestType): Promise<CompileResultType> {
@@ -33,10 +30,10 @@ export class CompilerController {
   }
 
   @Post("/stop")
-  async stop(@Body() data: StopRequestType): Promise<{ success: boolean; message: string }> {
-    const { model, graph } = data;
+  async stop(@Body() data: { modelId: number; graphId: number }): Promise<{ success: boolean; message: string }> {
+    const { modelId, graphId } = data;
 
-    const project = await this.projectService.findProjectByModelAndGraph(model.id, graph.id);
+    const project = await this.projectService.findProjectByModelAndGraph(modelId, graphId);
 
     if (!project) {
       return { success: false, message: "Project not found" };
@@ -45,8 +42,7 @@ export class CompilerController {
     const stopped = await this.projectService.stopProject(project.id);
 
     if (stopped) {
-      await this.projectService.cleanupProject(project.id);
-      return { success: true, message: "Project stopped and cleaned up" };
+      return { success: true, message: "Container stop pipeline triggered via GitLab CI/CD" };
     }
 
     return { success: false, message: "Failed to stop project" };

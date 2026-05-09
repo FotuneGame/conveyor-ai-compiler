@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { CompilerModule } from './compiler/compiler.module';
-import { DockerModule } from './docker';
 import { EnvConfigModule } from './env-config';
 import { GitLabModule } from './gitlab';
 import { ProjectModule } from './project';
@@ -10,7 +9,6 @@ import { TerminalModule } from './terminal';
 @Module({
   imports: [
     CompilerModule,
-    DockerModule,
     EnvConfigModule,
     GitLabModule,
     ProjectModule,

@@ -52,14 +52,20 @@ export class GitLabService {
     }
   }
 
-  async createPipeline(projectId: number, ref: string): Promise<GitLabPipelineType> {
+  async createPipeline(projectId: number, ref: string, variables?: Record<string, string>): Promise<GitLabPipelineType> {
     this.winstonService.debug(`Creating GitLab pipeline for project ${projectId}, ref: ${ref}`);
 
     try {
+      const payload: Record<string, unknown> = { ref };
+      
+      if (variables && Object.keys(variables).length > 0) {
+        payload.variables = variables;
+      }
+
       const response = await firstValueFrom(
         this.httpService.post(
           `${this.baseUrl}/api/v4/projects/${projectId}/pipeline`,
-          { ref },
+          payload,
           { headers: this.getHeaders() }
         )
       );

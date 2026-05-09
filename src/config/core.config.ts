@@ -9,10 +9,7 @@ export interface CoreConfig {
   gitlab: {
     baseUrl: string,
     token: string,
-  },
-  docker: {
-    registry: string,
-  },
+  }
 }
 
 export default registerAs(
@@ -26,9 +23,6 @@ export default registerAs(
     gitlab: {
       baseUrl: process.env.GITLAB_BASE_URL || 'https://gitlab.com',
       token: process.env.GITLAB_TOKEN || '',
-    },
-    docker: {
-      registry: process.env.DOCKER_REGISTRY || 'registry.gitlab.com',
-    },
+    }
   }),
 );

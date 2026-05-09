@@ -8,6 +8,20 @@ export type CreateContainerType = {
   endpointUrl: string;
 };
 
+export type UpdateContainerType = {
+  name?: string;
+  logsUrl?: string;
+  dockerUrl?: string;
+  endpointUrl?: string;
+  active?: boolean;
+};
+
+export type UpdateContainerStatusType = {
+  active?: boolean;
+  status?: 'running' | 'stopped' | 'error';
+  health?: 'healthy' | 'unhealthy' | 'unknown';
+};
+
 export type ContainerListResponseType = {
   data: CompilerContainerType[];
   total: number;
