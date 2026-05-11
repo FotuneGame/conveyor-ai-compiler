@@ -8,8 +8,8 @@ import type { ProtocolTypeType } from "../../../modules/compiler/types/protocol.
 export type TempProjectType = {
   id: string;
   path: string;
-  graphId: string;
-  modelId: string;
+  graphId: number;
+  modelId: number;
   containerName: string;
   imageName: string;
   createdAt: Date;

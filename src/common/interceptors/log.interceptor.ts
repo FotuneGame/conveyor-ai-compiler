@@ -35,16 +35,16 @@ export class LoggerInterceptor implements NestInterceptor {
       tap(() => {
         const duration = Date.now() - now;
         this.winstonService.log(`${method} ${url} ${duration}ms`, 'HTTP');
-        this.winstonService.debug(`${method} ${url} ${duration}ms`, 'HTTP', safeData);
+        // this.winstonService.debug(`${method} ${url} ${duration}ms`, 'HTTP', safeData);
       }),
       catchError((error) => {
         const duration = Date.now() - now;
-        this.winstonService.error(
-          `${method} ${url} ${duration}ms - Error: ${error.message};`,
-          error.stack,
-          'HTTP',
-          safeData
-        );
+        // this.winstonService.error(
+        //   `${method} ${url} ${duration}ms - Error: ${error.message};`,
+        //   error.stack,
+        //   'HTTP',
+        //   safeData
+        // );
         return throwError(() => error);
       }),
     );

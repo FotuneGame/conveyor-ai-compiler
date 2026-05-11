@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, UseGuards, ParseIntPipe } from "@nestjs/common";
+import { Controller, Post, Get, Body, Param, UseGuards, ParseIntPipe, HttpException, HttpStatus } from "@nestjs/common";
 import { AuthGuard } from "../../common/guards/auth.guard";
 import { ProjectService } from "../project/project.service";
 import type { CompileRequestType, NodeType } from "./types";
@@ -26,6 +26,13 @@ export class CompilerController {
 
     const result = await this.projectService.compileProject(project.id);
 
+    if (!result.success) {
+      throw new HttpException(
+        { message: result.error || "Compilation failed", projectId: result.projectId },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+
     return result;
   }
 
@@ -36,16 +43,22 @@ export class CompilerController {
     const project = await this.projectService.findProjectByModelAndGraph(modelId, graphId);
 
     if (!project) {
-      return { success: false, message: "Project not found" };
+      throw new HttpException(
+        { message: "Project not found", modelId, graphId },
+        HttpStatus.NOT_FOUND
+      );
     }
 
     const stopped = await this.projectService.stopProject(project.id);
 
-    if (stopped) {
-      return { success: true, message: "Container stop pipeline triggered via GitLab CI/CD" };
+    if (!stopped) {
+      throw new HttpException(
+        { message: "Failed to stop project", projectId: project.id },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
 
-    return { success: false, message: "Failed to stop project" };
+    return { success: true, message: "Container stop pipeline triggered via GitLab CI/CD" };
   }
 
   @Get("models/:modelId/graphs/:graphId/logs")
@@ -53,6 +66,15 @@ export class CompilerController {
     @Param('modelId', ParseIntPipe) modelId: number,
     @Param('graphId', ParseIntPipe) graphId: number,
   ): Promise<ContainerLogsType | null> {
-    return await this.projectService.getContainerLogs(modelId, graphId);
+    const logs = await this.projectService.getContainerLogs(modelId, graphId);
+
+    if (!logs) {
+      throw new HttpException(
+        { message: "Project not found or no pipeline available", modelId, graphId },
+        HttpStatus.NOT_FOUND
+      );
+    }
+
+    return logs;
   }
 }

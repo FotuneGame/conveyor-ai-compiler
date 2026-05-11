@@ -1,13 +1,12 @@
 import { Controller, Get } from "@nestjs/common";
 import { EnvConfigService } from "./env-config.service";
-import type { EnvConfigType } from "./types";
 
 @Controller()
 export class EnvConfigController {
   constructor(private readonly envConfigService: EnvConfigService) {}
 
   @Get("default")
-  async getDefaultEnv(): Promise<EnvConfigType> {
+  async getDefaultEnv(): Promise<string> {
     return await this.envConfigService.getDefaultEnvConfig();
   }
 }

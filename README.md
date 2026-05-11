@@ -115,9 +115,8 @@ MAX_REQUESTS_LIMIT=10
 
 COMPILER_SECRET=test-compiler-secret
 
-GITLAB_BASE_URL=http://localhost:8080
+GITLAB_URL=http://localhost:8080
 GITLAB_TOKEN=your-gitlab-token-here
-GITLAB_INTERNAL_URL=http://gitlab:80
 
 KEEP_TEMP_FILES=false
 COMPILER_TEMP_DIR=./tmp/compiler-projects
@@ -161,15 +160,14 @@ Start for GitLab runner:
 4) Create token for gitlab runner
 5) Set token in docker-compose for gitlab-runner
 ```
---token glrt-some-token
+--token glrt-J7b846axwBjrj0Q5mU3b9m86MQp0OjEKdToxCw.01.120y9u5o4
 ```
 6) Set tags in web and docker-compose
-```
---tag-list compiler
-```
 6) Run GitLab runner 
 
 If you need change gitlab root password in docker-compose.yaml
 ```
 - GITLAB_ROOT_PASSWORD=MySecurePass123!
 ```
+
+Attantion runner use tag: 'compiler'

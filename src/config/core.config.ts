@@ -9,9 +9,8 @@ export interface CoreConfig {
     keepTempFiles: boolean,
   },
   gitlab: {
-    baseUrl: string,
+    url: string,
     token: string,
-    internalUrl?: string,
   }
 }
 
@@ -26,9 +25,8 @@ export default registerAs(
       keepTempFiles: process.env.KEEP_TEMP_FILES === 'true',
     },
     gitlab: {
-      baseUrl: process.env.GITLAB_BASE_URL || 'https://gitlab.com',
+      url: process.env.GITLAB_URL || 'http://localhost:8080',
       token: process.env.GITLAB_TOKEN || '',
-      internalUrl: process.env.GITLAB_INTERNAL_URL,
     }
   }),
 );

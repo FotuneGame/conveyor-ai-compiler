@@ -77,8 +77,9 @@ export class TemplateService {
 
   private generateGitlabCi(ctx: TemplateContextType): string {
     const { model } = ctx;
-    const imageName = model.name.toLowerCase().replace(/[^a-z0-9]/g, "-");
-    const containerName = `compiler-${imageName}`;
+    const name = `${model.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${model.tag.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
+    const imageName = `${this.prefix}-image-${name}`;
+    const containerName = `${this.prefix}-container-${name}`;
     const modelId = model.id;
 
     const stopContainerScript = [
@@ -99,23 +100,23 @@ export class TemplateService {
 
     return [
       "default:",
-      "  image: docker:24-dind",
-      "  services:",
-      "    - docker:24-dind",
+      // ✅ Убираем dind — используем обычный docker-клиент + хостовый сокет
+      "  image: docker:latest",
+      // ✅ Убираем services: - docker:24-dind
       "",
       "variables:",
       `  DOCKER_IMAGE: ${imageName}`,
       `  CONTAINER_NAME: ${containerName}`,
       "  DOCKER_REGISTRY: registry.gitlab.com",
       `  MODEL_ID: ${modelId}`,
-      "  BACKEND_URL: ${process.env.BACKEND_URL || 'http://localhost:3000'}",
+      "  BACKEND_URL: ${process.env.BACKEND_URL || 'http://host.docker.internal:3000'}",
       "  COMPILER_SECRET: ${process.env.COMPILER_SECRET || 'test-compiler-secret'}",
       "  EXTERNAL_PORT: 3000",
-      "  DOCKER_TLS_CERTDIR: \"/certs\"",
+      // ✅ Убираем DOCKER_TLS_CERTDIR и DOCKER_TLS_VERIFY — не нужны без dind
       "",
       "stages:",
       "  - build",
-      "  - deploy",
+      "  - deploy", 
       "  - stop",
       "  - cleanup",
       "",
@@ -123,8 +124,6 @@ export class TemplateService {
       "  stage: build",
       "  tags:",
       "    - compiler",
-      "  variables:",
-      "    DOCKER_TLS_VERIFY: \"1\"",
       "  before_script:",
       "    - apk add --no-cache git openssh-client",
       "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",
@@ -140,8 +139,6 @@ export class TemplateService {
       "  stage: deploy",
       "  tags:",
       "    - compiler",
-      "  variables:",
-      "    DOCKER_TLS_VERIFY: \"1\"",
       "  before_script:",
       "    - apk add --no-cache git openssh-client",
       "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",
@@ -154,8 +151,6 @@ export class TemplateService {
       "  stage: stop",
       "  tags:",
       "    - compiler",
-      "  variables:",
-      "    DOCKER_TLS_VERIFY: \"1\"",
       "  before_script:",
       "    - apk add --no-cache git openssh-client",
       "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",
@@ -168,8 +163,6 @@ export class TemplateService {
       "  stage: cleanup",
       "  tags:",
       "    - compiler",
-      "  variables:",
-      "    DOCKER_TLS_VERIFY: \"1\"",
       "  before_script:",
       "    - apk add --no-cache git openssh-client",
       "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",

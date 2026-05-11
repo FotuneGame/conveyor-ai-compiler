@@ -3,21 +3,9 @@ import { ConfigService } from "@nestjs/config";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { WinstonService } from "../../shared/logger/winston.service";
-import type { TempProjectType } from "./types";
+import type { TempProjectType, StoreType } from "./types";
 
-export interface StoreType {
-  [projectId: string]: {
-    id: string;
-    path: string;
-    graphId: string;
-    modelId: string;
-    containerName: string;
-    imageName: string;
-    createdAt: string;
-    gitLabPipelineId?: number;
-    gitLabId?: number;
-  };
-}
+
 
 @Injectable()
 export class StoreService implements OnModuleInit, OnModuleDestroy {
@@ -62,10 +50,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
   }
 
   set(projectId: string, project: TempProjectType): void {
-    this.projects[projectId] = {
-      ...project,
-      createdAt: project.createdAt.toISOString(),
-    };
+    this.projects[projectId] = project;
     this.saveStore();
   }
 
@@ -90,14 +75,23 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     return this.projects;
   }
 
-  findProjectByModelAndGraph(modelId: string, graphId: string): TempProjectType | undefined {
-    const project = Object.values(this.projects).find(
-      (p) => p.modelId === modelId && p.graphId === graphId
+  findProjectByModelAndGraph(modelId: number, graphId: number): TempProjectType | undefined {
+    const projects = Object.values(this.projects).filter(
+      p => Number(p.modelId) === modelId && Number(p.graphId) === graphId
     );
-    if (!project) return undefined;
+    
+    if (projects.length === 0) {
+      this.winstonService.warn(`[Store] ✗ Not found for modelId="${modelId}", graphId="${graphId}"`);
+      return undefined;
+    }
+    
+    const latest = projects.reduce((a, b) => 
+      new Date(a.createdAt) > new Date(b.createdAt) ? a : b
+    );
+    
     return {
-      ...project,
-      createdAt: new Date(project.createdAt),
+      ...latest,
+      createdAt: new Date(latest.createdAt),
     };
   }
 
