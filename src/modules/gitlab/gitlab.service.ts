@@ -197,6 +197,10 @@ export class GitLabService {
 
     const token = this.configService.get<string>("core.gitlab.token", "");
 
+    // Используем внутренний URL если он настроен
+    const gitUrl = this.getInternalGitUrl(httpUrlToRepo);
+    this.winstonService.log(`Using Git URL for push: ${gitUrl}`);
+
     try {
       // Проверяем что проект существует на диске
       const lsResult = await this.terminalService.execute({
@@ -234,6 +238,13 @@ export class GitLabService {
         cwd: projectPath,
       }).catch(() => {});
 
+      // Проверяем есть ли файлы для коммита
+      const lsFilesResult = await this.terminalService.execute({
+        command: "find",
+        args: [projectPath, "-type", "f"],
+      });
+      this.winstonService.log(`Files to commit: ${lsFilesResult.stdout}`);
+
       // Удаляем существующий remote если есть
       try {
         await this.terminalService.execute({
@@ -245,9 +256,9 @@ export class GitLabService {
         // remote может не существовать
       }
 
-      // Добавляем remote с токеном в URL
-      const authenticatedUrl = httpUrlToRepo.replace('http://', `http://oauth2:${token}@`);
-      this.winstonService.debug(`Adding remote origin: ${authenticatedUrl}`);
+      // Добавляем remote с токеном в URL - используем внутренний URL
+      const authenticatedUrl = gitUrl.replace('http://', `http://oauth2:${token}@`);
+      this.winstonService.log(`Adding remote origin with authentication`);
       
       const addRemoteResult = await this.terminalService.execute({
         command: "git",
@@ -271,10 +282,10 @@ export class GitLabService {
         cwd: projectPath,
       });
 
-      this.winstonService.debug(`Git status: ${statusResult.stdout}`);
+      this.winstonService.log(`Git status: ${statusResult.stdout}`);
 
       if (!statusResult.stdout || statusResult.stdout.trim() === "") {
-        this.winstonService.debug("No changes to commit");
+        this.winstonService.warn("No changes to commit - repository may already be up to date");
         return;
       }
 
@@ -285,7 +296,7 @@ export class GitLabService {
         cwd: projectPath,
       });
 
-      this.winstonService.debug(`Commit result: code=${commitResult.code}, stdout=${commitResult.stdout}, stderr=${commitResult.stderr}`);
+      this.winstonService.log(`Commit result: code=${commitResult.code}, stdout=${commitResult.stdout}, stderr=${commitResult.stderr}`);
 
       if (commitResult.code !== 0) {
         this.winstonService.warn(`No changes to commit: ${commitResult.stderr}`);
@@ -298,7 +309,7 @@ export class GitLabService {
         throw new InternalServerErrorException("No files to commit");
       }
 
-      this.winstonService.debug(`Commit successful`);
+      this.winstonService.log(`Commit successful`);
 
       // Проверяем remote перед push
       const remoteResult = await this.terminalService.execute({
@@ -306,9 +317,18 @@ export class GitLabService {
         args: ["remote", "-v"],
         cwd: projectPath,
       });
-      this.winstonService.debug(`Remote list: ${remoteResult.stdout}`);
+      this.winstonService.log(`Remote list: ${remoteResult.stdout}`);
+
+      // Проверяем связь с remote перед push
+      const lsRemoteResult = await this.terminalService.execute({
+        command: "git",
+        args: ["ls-remote", "origin"],
+        cwd: projectPath,
+      });
+      this.winstonService.debug(`LS-REMOTE result: ${lsRemoteResult.stdout} ${lsRemoteResult.stderr}`);
 
       // Отправляем код с force push для автоматического разрешения конфликтов
+      this.winstonService.log(`Pushing to origin/main...`);
       const result = await this.terminalService.execute({
         command: "git",
         args: ["push", "--force", "-u", "origin", "main"],
@@ -320,17 +340,19 @@ export class GitLabService {
         },
       });
 
-      this.winstonService.debug(`Push result: code=${result.code}, stdout=${result.stdout}, stderr=${result.stderr}`);
+      this.winstonService.log(`Push result: code=${result.code}, stdout=${result.stdout}, stderr=${result.stderr}`);
 
       if (result.code !== 0) {
         this.winstonService.error(`Failed to push to repository: ${result.stderr}`);
-        throw new InternalServerErrorException("Failed to push code to GitLab");
+        this.winstonService.error(`Push stderr: ${result.stderr}`);
+        this.winstonService.error(`Push stdout: ${result.stdout}`);
+        throw new InternalServerErrorException(`Failed to push code to GitLab: ${result.stderr}`);
       }
 
-      this.winstonService.debug(`Successfully pushed code to ${httpUrlToRepo}`);
+      this.winstonService.log(`Successfully pushed code to ${gitUrl}`);
     } catch (error) {
       this.winstonService.error(`Failed to push to repository: ${error}`);
-      throw new InternalServerErrorException("Failed to push code to GitLab");
+      throw new InternalServerErrorException(`Failed to push code to GitLab: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
