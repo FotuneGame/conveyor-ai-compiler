@@ -1,12 +1,18 @@
 ﻿import { Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { WinstonService } from "src/shared/logger/winston.service";
 import type { GeneratedFileType, TemplateContextType } from "./types";
 
 @Injectable()
 export class TemplateService {
+  private readonly prefix: string;
+
   constructor(
+    private readonly configService: ConfigService,
     private readonly winstonService: WinstonService
-  ) {}
+  ) {
+    this.prefix = this.configService.get<string>("core.compiler.name", "compiler-typescript");
+  }
 
   generateFiles(context: TemplateContextType): GeneratedFileType[] {
     this.winstonService.debug(`Generating files for model ${context.model.id}/graph ${context.graph.id}`);
@@ -95,69 +101,37 @@ export class TemplateService {
       "  image: docker:24-dind",
       "  services:",
       "    - docker:24-dind",
+      "  tags:",
+      "    - compiler",
       "  script:",
-      "    - docker build -t ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${CI_COMMIT_SHA} .",
-      "    - docker push ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
-      "  rules:",
-      "    - if: $CI_COMMIT_BRANCH == 'main'",
+      "    - docker build -t ${DOCKER_IMAGE}:${CI_COMMIT_SHA} .",
+      "    - docker tag ${DOCKER_IMAGE}:${CI_COMMIT_SHA} ${DOCKER_IMAGE}:latest",
+      "    - docker push ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
+      "    - docker push ${DOCKER_IMAGE}:latest",
       "",
       "deploy:",
       "  stage: deploy",
-      "  image: curlimages/curl:latest",
+      "  image: docker:24-dind",
+      "  tags:",
+      "    - compiler",
       "  script:",
-      '    - |',
-      "      # Создаем запись о контейнере в backend",
-      '      CONTAINER_RESPONSE=$(curl -s -X POST "$BACKEND_URL/api/compiler/models/$MODEL_ID/containers" \\',
-      '        -H "Authorization: Bearer $COMPILER_SECRET" \\',
-      '        -H "Content-Type: application/json" \\',
-      '        -d "{\\"name\\": \\"$CONTAINER_NAME\\", \\"logsUrl\\": \\"$BACKEND_URL/api/compiler/models/$MODEL_ID/containers/$CONTAINER_NAME/logs\\", \\"dockerUrl\\": \\"$BACKEND_URL/api/docker/containers/$CONTAINER_NAME\\", \\"endpointUrl\\": \\"http://$CI_SERVER_FQDN:$EXTERNAL_PORT\\"}")',
-      '      CONTAINER_ID=$(echo $CONTAINER_RESPONSE | jq -r \'.id\')',
-      "      echo 'Container ID: $CONTAINER_ID'",
-      "      echo $CONTAINER_ID > container_id.txt",
-      "",
-      "    # Запускаем контейнер",
-      "    - docker pull ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
+      "    - docker pull ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
       "    - docker stop $CONTAINER_NAME || true",
       "    - docker rm $CONTAINER_NAME || true",
-      "    - docker run -d --name $CONTAINER_NAME -p $EXTERNAL_PORT:3000 ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
-      "",
-      "    # Ждем запуска приложения",
+      "    - docker run -d --name $CONTAINER_NAME -p $EXTERNAL_PORT:3000 ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
       "    - sleep 10",
-      "",
-      '    - |',
-      "      # Обновляем статус контейнера на активный",
-      '      if [ -f container_id.txt ]; then',
-      '        CONTAINER_ID=$(cat container_id.txt)',
-      '        curl -s -X PATCH "$BACKEND_URL/api/compiler/models/$MODEL_ID/containers/$CONTAINER_ID" \\',
-      '          -H "Authorization: Bearer $COMPILER_SECRET" \\',
-      '          -H "Content-Type: application/json" \\',
-      '          -d \'{\\"active\\": true, \\"status\\": \\"running\\", \\"health\\": \\"healthy\\"}\'',
-      '      fi',
-      "  rules:",
-      "    - if: $CI_COMMIT_BRANCH == 'main'",
+      "    - docker ps",
       "",
       "cleanup:",
       "  stage: cleanup",
-      "  image: curlimages/curl:latest",
+      "  image: docker:24-dind",
+      "  tags:",
+      "    - compiler",
       "  script:",
-      "    # Останавливаем контейнер",
       "    - docker stop $CONTAINER_NAME || true",
       "    - docker rm $CONTAINER_NAME || true",
-      "    - docker rmi ${DOCKER_REGISTRY}/${DOCKER_IMAGE}:${CI_COMMIT_SHA} || true",
-      "",
-      '    - |',
-      "      # Обновляем статус контейнера в backend на неактивный",
-      '      if [ -f container_id.txt ]; then',
-      '        CONTAINER_ID=$(cat container_id.txt)',
-      '        curl -s -X PATCH "$BACKEND_URL/api/compiler/models/$MODEL_ID/containers/$CONTAINER_ID" \\',
-      '          -H "Authorization: Bearer $COMPILER_SECRET" \\',
-      '          -H "Content-Type: application/json" \\',
-      '          -d \'{\\"active\\": false, \\"status\\": \\"stopped\\", \\"health\\": \\"unknown\\"}\'',
-      '      fi',
-      "  rules:",
-      "    - if: $CI_PIPELINE_SOURCE == 'web'",
-      "    - if: $CI_PIPELINE_SOURCE == 'schedule'",
-      "    - if: $STOP_CONTAINER == 'true'",
+      "    - docker rmi ${DOCKER_IMAGE}:${CI_COMMIT_SHA} || true",
+      "    - docker rmi ${DOCKER_IMAGE}:latest || true",
       "  when: manual",
     ].join("\n");
   }

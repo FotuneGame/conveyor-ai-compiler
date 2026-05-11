@@ -80,7 +80,7 @@ services:
       start_period: 300s
     environment:
       - GITLAB_ROOT_PASSWORD=MySecurePass123!
-      - GITLAB_OMNIBUS_CONFIG=external_url 'http://localhost:8080'; nginx['listen_port']=80
+      - GITLAB_OMNIBUS_CONFIG=external_url 'http://localhost:8080'; nginx['listen_port']=80; gitlab_rails['gitlab_shell_ssh_port']=8022
 
   gitlab-runner:
     image: gitlab/gitlab-runner:latest
@@ -94,6 +94,7 @@ services:
           gitlab-runner register --non-interactive \
             --url http://gitlab:80 \
             --token glrt-J7b846axwBjrj0Q5mU3b9m86MQp0OjEKdToxCw.01.120y9u5o4 \
+            --tag-list compiler \
             --executor docker \
             --description 'compiler-runner' \
             --docker-image docker:latest \

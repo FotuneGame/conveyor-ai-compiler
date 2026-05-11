@@ -162,6 +162,10 @@ Start for GitLab runner:
 ```
 --token glrt-some-token
 ```
+6) Set tags in web and docker-compose
+```
+--tag-list compiler
+```
 6) Run GitLab runner 
 
 If you need change gitlab root password in docker-compose.yaml

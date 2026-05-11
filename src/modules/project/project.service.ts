@@ -36,8 +36,6 @@ export class ProjectService {
     
     this.winstonService.debug(`Creating temp project: ${projectId}`);
     this.ensureDir(projectPath);
-
-    // 🔄 Генерируем файлы через TemplateService и записываем через ProjectService
     const files = this.templateService.generateFiles({ model, graph, nodes, dataTypes, nodeTypes, protocolTypes });
     
     for (const file of files) {
@@ -72,11 +70,9 @@ export class ProjectService {
     }
 
     try {
-      // 🔄 Синхронизируем с GitLab - сборка будет в CI/CD
       const gitLabProjectId = await this.syncToGitLabService(project);
       const pipelineId = await this.triggerPipelineService(project, gitLabProjectId);
 
-      // Сохраняем pipelineId в проекте
       project.gitLabPipelineId = pipelineId;
 
       return {
@@ -105,19 +101,15 @@ export class ProjectService {
     this.winstonService.debug(`Stopping project: ${projectId}`);
 
     try {
-      // 🔄 Останавливаем контейнер через GitLab CI/CD pipeline (cleanup stage)
-      // Используем gitLabProjectId из проекта (если сохранили при компиляции)
       if (!project.gitLabProjectId) {
         this.winstonService.warn("GitLab project ID not found for this project");
         return false;
       }
 
-      // Запускаем pipeline с cleanup stage через переменную STOP_CONTAINER
       await this.gitLabService.createPipeline(project.gitLabProjectId, "main", {
         STOP_CONTAINER: "true",
       });
 
-      // Синхронизация с backend
       await this.syncCleanupWithBackend(project);
 
       this.storeService.delete(projectId);
@@ -149,7 +141,6 @@ export class ProjectService {
     const gitLabProjectId = project.gitLabProjectId;
 
     try {
-      // Получаем jobs пайплайна
       const jobs = await this.gitLabService.getPipelineJobs(gitLabProjectId, project.gitLabPipelineId);
 
       const jobsWithLogs = await Promise.all(
@@ -179,8 +170,6 @@ export class ProjectService {
     if (!project) return;
 
     this.winstonService.debug(`Cleaning up project: ${projectId}`);
-
-    // 🔄 Синхронизация состояния контейнеров с backend
     await this.syncCleanupWithBackend(project);
 
     const keepTempFiles = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
@@ -247,23 +236,23 @@ export class ProjectService {
     this.winstonService.debug(`Syncing project ${project.id} to GitLab`);
     const projectName = `${this.prefix}-${project.modelId}-${project.graphId}`;
     
-    // Создаем новый проект с уникальным именем (с timestamp)
-    this.winstonService.debug(`Creating new GitLab project: ${projectName}`);
-    const newProject = await this.gitLabService.createProject({
-      name: projectName,
-      description: `Compiler project for model ${project.modelId}, graph ${project.graphId}`,
-      visibility: "private",
-    });
-
-    this.winstonService.debug(`Created GitLab project: ${newProject.name} (ID: ${newProject.id})`);
+    let gitLabProject = await this.gitLabService.findProjectByName(projectName);
     
-    // Сохраняем gitLabProjectId в проекте
-    project.gitLabProjectId = newProject.id;
+    if (!gitLabProject) {
+      this.winstonService.debug(`Creating new GitLab project: ${projectName}`);
+      gitLabProject = await this.gitLabService.createProject({
+        name: projectName,
+        description: `Compiler project for model ${project.modelId}, graph ${project.graphId}`,
+        visibility: "private",
+      });
+      this.winstonService.debug(`Created GitLab project: ${gitLabProject.name} (ID: ${gitLabProject.id})`);
+    } else {
+      this.winstonService.debug(`Using existing GitLab project: ${gitLabProject.name} (ID: ${gitLabProject.id})`);
+    }
     
-    // Отправляем код в новый репозиторий с force push
-    await this.gitLabService.pushToRepository(project.path, newProject.id, newProject.httpUrlToRepo);
-
-    return newProject.id;
+    project.gitLabProjectId = gitLabProject.id;
+    await this.gitLabService.pushToRepository(project.path, gitLabProject.id, gitLabProject.httpUrlToRepo);
+    return gitLabProject.id;
   }
 
   private async gitCmdService(cwd: string, ...args: string[]): Promise<void> {

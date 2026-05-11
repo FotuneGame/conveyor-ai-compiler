@@ -48,7 +48,15 @@ export class GitLabService {
       );
 
       return this.mapProject(response.data);
-    } catch (error) {
+    } catch (error: any) {
+      // Проверяем если проект уже существует (ошибка 400)
+      if (error?.response?.status === 400) {
+        this.winstonService.debug(`Project ${data.name} already exists, searching for it`);
+        const existing = await this.findProjectByName(data.name);
+        if (existing) {
+          return existing;
+        }
+      }
       this.winstonService.error(`Failed to create GitLab project: ${error}`);
       throw new InternalServerErrorException("Failed to create GitLab project");
     }
@@ -83,9 +91,10 @@ export class GitLabService {
     this.winstonService.debug(`Searching GitLab project by name: ${name}`);
 
     try {
+      // Ищем проект по имени через search API
       const response = await firstValueFrom(
         this.httpService.get<{ projects: GitLabProjectType[] }>(
-          `${this.baseUrl}/api/v4/projects?owned=true&per_page=100`,
+          `${this.baseUrl}/api/v4/projects?search=${encodeURIComponent(name)}&owned=true&per_page=10`,
           { headers: this.getHeaders() }
         )
       );
@@ -98,7 +107,7 @@ export class GitLabService {
         return found;
       }
 
-      this.winstonService.debug(`Project ${name} not found in owned projects`);
+      this.winstonService.debug(`Project ${name} not found`);
       return null;
     } catch (error) {
       this.winstonService.error(`Failed to find GitLab project: ${error}`);
@@ -106,65 +115,108 @@ export class GitLabService {
     }
   }
 
-async pushToRepository(projectPath: string, projectId: number, httpUrlToRepo: string): Promise<void> {
+  async pushToRepository(projectPath: string, projectId: number, httpUrlToRepo: string): Promise<void> {
     this.winstonService.debug(`Pushing code to GitLab repository: ${httpUrlToRepo}`);
 
     const token = this.configService.get<string>("core.gitlab.token", "");
 
     try {
+      // Инициализируем git если нужно
       await this.terminalService.execute({
         command: "git",
         args: ["init"],
         cwd: projectPath,
-      });
+      }).catch(() => {});
 
-      await this.terminalService.execute({
-        command: "git",
-        args: ["branch", "-M", "main"],
-        cwd: projectPath,
-      });
-
+      // Настраиваем пользователя
       await this.terminalService.execute({
         command: "git",
         args: ["config", "user.email", "compiler@example.com"],
         cwd: projectPath,
-      });
+      }).catch(() => {});
 
       await this.terminalService.execute({
         command: "git",
         args: ["config", "user.name", "Compiler"],
         cwd: projectPath,
-      });
+      }).catch(() => {});
 
+      // Устанавливаем основную ветку как main
       await this.terminalService.execute({
         command: "git",
-        args: ["remote", "remove", "origin"],
+        args: ["symbolic-ref", "HEAD", "refs/heads/main"],
         cwd: projectPath,
       }).catch(() => {});
 
-      const authenticatedUrl = httpUrlToRepo.replace('https://', `https://oauth2:${token}@`);
+      // Удаляем существующий remote если есть
+      try {
+        await this.terminalService.execute({
+          command: "git",
+          args: ["remote", "remove", "origin"],
+          cwd: projectPath,
+        });
+      } catch (e) {
+        // remote может не существовать
+      }
+
+      // Добавляем remote с токеном в URL
+      const authenticatedUrl = httpUrlToRepo.replace('http://', `http://oauth2:${token}@`);
       await this.terminalService.execute({
         command: "git",
         args: ["remote", "add", "origin", authenticatedUrl],
         cwd: projectPath,
       });
 
+      // Добавляем все файлы
       await this.terminalService.execute({
         command: "git",
         args: ["add", "."],
         cwd: projectPath,
       });
 
-      await this.terminalService.execute({
+      // Проверяем есть ли что коммитить
+      const statusResult = await this.terminalService.execute({
+        command: "git",
+        args: ["status", "--porcelain"],
+        cwd: projectPath,
+      });
+
+      if (!statusResult.stdout || statusResult.stdout.trim() === "") {
+        this.winstonService.debug("No changes to commit");
+        return;
+      }
+
+      // Делаем коммит
+      const commitResult = await this.terminalService.execute({
         command: "git",
         args: ["commit", "-m", `Compiler build ${Date.now()}`],
         cwd: projectPath,
       });
 
+      if (commitResult.code !== 0) {
+        this.winstonService.warn(`No changes to commit: ${commitResult.stderr}`);
+        // Проверяем есть ли файлы
+        const lsResult = await this.terminalService.execute({
+          command: "ls",
+          args: ["-la"],
+          cwd: projectPath,
+        });
+        this.winstonService.warn(`Project path contents: ${lsResult.stdout}`);
+        throw new InternalServerErrorException("No files to commit");
+      }
+
+      this.winstonService.debug(`Commit successful`);
+
+      // Отправляем код с force push для автоматического разрешения конфликтов
       const result = await this.terminalService.execute({
         command: "git",
         args: ["push", "--force", "-u", "origin", "main"],
         cwd: projectPath,
+        env: {
+          ...process.env,
+          GIT_ASKPASS: "echo",
+          GIT_TERMINAL_PROMPT: "0",
+        },
       });
 
       if (result.code !== 0) {
