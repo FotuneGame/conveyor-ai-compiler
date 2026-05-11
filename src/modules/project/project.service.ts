@@ -13,6 +13,7 @@ import type { TempProjectType, CreateTempProjectType, CompileResultType, Contain
 
 @Injectable()
 export class ProjectService {
+  private readonly prefix: string;
   private readonly tempDir: string;
 
   constructor(
@@ -24,6 +25,7 @@ export class ProjectService {
     private readonly backendService: BackendService,
     private readonly storeService: StoreService,
   ) {
+    this.prefix = this.configService.get<string>("core.compiler.name", "compiler-typescript");
     this.tempDir = this.configService.get<string>("core.compiler.tempDir", "./tmp/compiler-projects");
   }
 
@@ -54,8 +56,8 @@ export class ProjectService {
       path: projectPath,
       graphId: String(graph.id),
       modelId: String(model.id),
-      containerName: `compiler-${projectId}`,
-      imageName: `compiler-${projectId}:latest`,
+      containerName: `${this.prefix}-${projectId}`,
+      imageName: `${this.prefix}-${projectId}:latest`,
       createdAt: new Date(),
     };
 
@@ -243,7 +245,7 @@ export class ProjectService {
 
   private async syncToGitLabService(project: TempProjectType): Promise<number> {
     this.winstonService.debug(`Syncing project ${project.id} to GitLab`);
-    const projectName = `compiler-${project.modelId}-${project.graphId}-${Date.now()}`;
+    const projectName = `${this.prefix}-${project.modelId}-${project.graphId}`;
     
     // Создаем новый проект с уникальным именем (с timestamp)
     this.winstonService.debug(`Creating new GitLab project: ${projectName}`);
