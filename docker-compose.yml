@@ -21,6 +21,7 @@ services:
       - COMPILER_SECRET=test-compiler-secret
       - GITLAB_BASE_URL=http://localhost:8080
       - GITLAB_TOKEN=glpat-xs8lA5qHIjwmp7e__F4nSm86MQp1OjEH.01.0w1giv585
+      - GITLAB_INTERNAL_URL=http://gitlab:80
       - KEEP_TEMP_FILES=false
       - COMPILER_TEMP_DIR=/app/tmp/compiler-projects
       - ENV_PATH=/app/public/example.env

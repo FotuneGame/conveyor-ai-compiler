@@ -129,11 +129,20 @@ describe('CompilerController (e2e)', () => {
     storeService = moduleFixture.get(StoreService);
   });
 
+  afterEach(() => {
+    // Очищаем store после каждого теста чтобы избежать утечек
+    storeService.clear();
+  });
+
   afterAll(async () => {
     await app.close();
   });
 
   describe('POST /compilate', () => {
+    beforeEach(() => {
+      storeService.clear();
+    });
+      
     it('должен создать проект и запустить pipeline', async () => {
       const response = await request(app.getHttpServer())
         .post('/compilate')
@@ -180,8 +189,7 @@ describe('CompilerController (e2e)', () => {
   });
 
   describe('POST /stop', () => {
-    beforeAll(async () => {
-      // Очищаем store перед тестами
+    beforeEach(async () => {
       storeService.clear();
       
       // Создаем и компилируем проект для теста stop
@@ -235,8 +243,7 @@ describe('CompilerController (e2e)', () => {
   });
 
   describe('GET /models/:modelId/graphs/:graphId/logs', () => {
-    beforeAll(async () => {
-      // Очищаем store перед тестами
+    beforeEach(async () => {
       storeService.clear();
       
       // Создаем и компилируем проект для теста логов

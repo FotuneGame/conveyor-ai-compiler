@@ -117,6 +117,7 @@ COMPILER_SECRET=test-compiler-secret
 
 GITLAB_BASE_URL=http://localhost:8080
 GITLAB_TOKEN=your-gitlab-token-here
+GITLAB_INTERNAL_URL=http://gitlab:80
 
 KEEP_TEMP_FILES=false
 COMPILER_TEMP_DIR=./tmp/compiler-projects

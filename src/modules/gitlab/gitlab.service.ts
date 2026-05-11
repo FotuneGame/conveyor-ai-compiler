@@ -192,8 +192,8 @@ export class GitLabService {
   }
 
   async pushToRepository(projectPath: string, projectId: number, httpUrlToRepo: string): Promise<void> {
-    this.winstonService.debug(`Pushing code to GitLab repository: ${httpUrlToRepo}`);
-    this.winstonService.debug(`Project ID: ${projectId}, Path: ${projectPath}`);
+    this.winstonService.log(`Pushing code to GitLab repository: ${httpUrlToRepo}`);
+    this.winstonService.log(`Project ID: ${projectId}, Path: ${projectPath}`);
 
     const token = this.configService.get<string>("core.gitlab.token", "");
 
@@ -202,13 +202,12 @@ export class GitLabService {
     this.winstonService.log(`Using Git URL for push: ${gitUrl}`);
 
     try {
-      // Проверяем что проект существует на диске
-      const lsResult = await this.terminalService.execute({
-        command: "ls",
-        args: ["-la"],
-        cwd: projectPath,
+      // Проверяем что проект существует на диске - используем find вместо ls для кроссплатформенности
+      const findResult = await this.terminalService.execute({
+        command: "powershell",
+        args: ["-Command", `Get-ChildItem -Path "${projectPath}" -Recurse -File | Select-Object FullName`],
       });
-      this.winstonService.debug(`Project path contents: ${lsResult.stdout}`);
+      this.winstonService.log(`Files in project: ${findResult.stdout.substring(0, 500)}`);
 
       // Инициализируем git если нужно
       const initResult = await this.terminalService.execute({
@@ -216,7 +215,7 @@ export class GitLabService {
         args: ["init"],
         cwd: projectPath,
       });
-      this.winstonService.debug(`Git init result: ${initResult.stdout} ${initResult.stderr}`);
+      this.winstonService.log(`Git init result: ${initResult.stdout} ${initResult.stderr}`);
 
       // Настраиваем пользователя
       await this.terminalService.execute({
@@ -240,10 +239,10 @@ export class GitLabService {
 
       // Проверяем есть ли файлы для коммита
       const lsFilesResult = await this.terminalService.execute({
-        command: "find",
-        args: [projectPath, "-type", "f"],
+        command: "powershell",
+        args: ["-Command", `Get-ChildItem -Path "${projectPath}" -Recurse -File | Select-Object FullName`],
       });
-      this.winstonService.log(`Files to commit: ${lsFilesResult.stdout}`);
+      this.winstonService.log(`Files to commit: ${lsFilesResult.stdout.substring(0, 500)}`);
 
       // Удаляем существующий remote если есть
       try {
@@ -265,7 +264,7 @@ export class GitLabService {
         args: ["remote", "add", "origin", authenticatedUrl],
         cwd: projectPath,
       });
-      this.winstonService.debug(`Add remote result: ${addRemoteResult.stdout} ${addRemoteResult.stderr}`);
+      this.winstonService.log(`Add remote result: ${addRemoteResult.stdout} ${addRemoteResult.stderr}`);
 
       // Добавляем все файлы
       const addResult = await this.terminalService.execute({
@@ -273,7 +272,7 @@ export class GitLabService {
         args: ["add", "."],
         cwd: projectPath,
       });
-      this.winstonService.debug(`Git add result: ${addResult.stdout} ${addResult.stderr}`);
+      this.winstonService.log(`Git add result: ${addResult.stdout} ${addResult.stderr}`);
 
       // Проверяем есть ли что коммитить
       const statusResult = await this.terminalService.execute({
@@ -301,9 +300,8 @@ export class GitLabService {
       if (commitResult.code !== 0) {
         this.winstonService.warn(`No changes to commit: ${commitResult.stderr}`);
         const lsResult2 = await this.terminalService.execute({
-          command: "ls",
-          args: ["-la"],
-          cwd: projectPath,
+          command: "powershell",
+          args: ["-Command", `Get-ChildItem -Path "${projectPath}" -Recurse -File | Select-Object FullName`],
         });
         this.winstonService.warn(`Project path contents: ${lsResult2.stdout}`);
         throw new InternalServerErrorException("No files to commit");
@@ -325,7 +323,7 @@ export class GitLabService {
         args: ["ls-remote", "origin"],
         cwd: projectPath,
       });
-      this.winstonService.debug(`LS-REMOTE result: ${lsRemoteResult.stdout} ${lsRemoteResult.stderr}`);
+      this.winstonService.log(`LS-REMOTE result: ${lsRemoteResult.stdout} ${lsRemoteResult.stderr}`);
 
       // Отправляем код с force push для автоматического разрешения конфликтов
       this.winstonService.log(`Pushing to origin/main...`);
