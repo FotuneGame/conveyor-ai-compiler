@@ -11,6 +11,7 @@ export interface CoreConfig {
   gitlab: {
     baseUrl: string,
     token: string,
+    internalUrl?: string,
   }
 }
 
@@ -27,6 +28,7 @@ export default registerAs(
     gitlab: {
       baseUrl: process.env.GITLAB_BASE_URL || 'https://gitlab.com',
       token: process.env.GITLAB_TOKEN || '',
+      internalUrl: process.env.GITLAB_INTERNAL_URL,
     }
   }),
 );

@@ -1,5 +1,5 @@
 import { Controller, Post, Get, Body, Param, UseGuards, ParseIntPipe } from "@nestjs/common";
-import { AuthGuard } from "src/common/guards/auth.guard";
+import { AuthGuard } from "../../common/guards/auth.guard";
 import { ProjectService } from "../project/project.service";
 import type { CompileRequestType, NodeType } from "./types";
 import type { CompileResultType, ContainerLogsType } from "../project/types";

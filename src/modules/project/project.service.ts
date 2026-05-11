@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "crypto";
 import { join, dirname } from "path";
 import { rmSync, mkdirSync, existsSync, writeFileSync } from "fs";
-import { WinstonService } from "src/shared/logger/winston.service";
+import { WinstonService } from "../../shared/logger/winston.service";
 import { TerminalService } from "../terminal/terminal.service";
 import { GitLabService } from "../gitlab/gitlab.service";
 import { TemplateService } from "../template/template.service";
@@ -70,10 +70,12 @@ export class ProjectService {
     }
 
     try {
-      const gitLabProjectId = await this.syncToGitLabService(project);
-      const pipelineId = await this.triggerPipelineService(project, gitLabProjectId);
+      const { gitLabProjectId, pipelineId } = await this.syncAndTriggerPipeline(project);
 
+      // Сохраняем pipeline ID в store
       project.gitLabPipelineId = pipelineId;
+      project.gitLabProjectId = gitLabProjectId;
+      this.storeService.set(projectId, project);
 
       return {
         success: true,
@@ -86,9 +88,54 @@ export class ProjectService {
       };
     } catch (error) {
       this.winstonService.error(`Compile failed for ${projectId}: ${error}`);
-      await this.cleanupProject(projectId);
+      
+      // Сохраняем информацию о проекте даже при ошибке, чтобы можно было получить логи
+      if (project.gitLabProjectId && project.gitLabPipelineId) {
+        this.storeService.set(projectId, project);
+      } else if (project.gitLabProjectId) {
+        // Если проект создан но pipeline не успел создаться, сохраняем проект
+        this.storeService.set(projectId, project);
+      }
+      
+      // Очищаем только временные файлы, но не удаляем из store
+      await this.cleanupTempFiles(projectId);
       return this.errorResult(projectId, error instanceof Error ? error.message : "Unknown error");
     }
+  }
+
+  private async syncAndTriggerPipeline(project: TempProjectType): Promise<{ gitLabProjectId: number; pipelineId: number }> {
+    this.winstonService.debug(`Syncing project ${project.id} to GitLab and triggering pipeline`);
+    const projectName = `${this.prefix}-${project.modelId}-${project.graphId}`;
+    
+    let gitLabProject = await this.gitLabService.findProjectByName(projectName);
+    
+    if (!gitLabProject) {
+      this.winstonService.debug(`Creating new GitLab project: ${projectName}`);
+      gitLabProject = await this.gitLabService.createProject({
+        name: projectName,
+        description: `Compiler project for model ${project.modelId}, graph ${project.graphId}`,
+        visibility: "private",
+      });
+      this.winstonService.debug(`Created GitLab project: ${gitLabProject.name} (ID: ${gitLabProject.id})`);
+    } else {
+      this.winstonService.debug(`Using existing GitLab project: ${gitLabProject.name} (ID: ${gitLabProject.id})`);
+    }
+    
+    if (!gitLabProject) {
+      throw new Error(`Failed to create or find GitLab project: ${projectName}`);
+    }
+    
+    project.gitLabProjectId = gitLabProject.id;
+    this.storeService.set(project.id, project);
+    
+    // Push кода в репозиторий
+    await this.gitLabService.pushToRepository(project.path, gitLabProject.id, gitLabProject.httpUrlToRepo);
+    
+    // Создаем pipeline ТОЛЬКО ОДИН РАЗ после успешного push
+    const pipeline = await this.gitLabService.createPipeline(gitLabProject.id, "main");
+    this.winstonService.debug(`Created pipeline ${pipeline.id} for project ${gitLabProject.id}`);
+    
+    return { gitLabProjectId: gitLabProject.id, pipelineId: pipeline.id };
   }
 
   async stopProject(projectId: string): Promise<boolean> {
@@ -103,12 +150,27 @@ export class ProjectService {
     try {
       if (!project.gitLabProjectId) {
         this.winstonService.warn("GitLab project ID not found for this project");
-        return false;
+        // Если gitLabProjectId нет, пытаемся найти проект по имени
+        const projectName = `${this.prefix}-${project.modelId}-${project.graphId}`;
+        const gitLabProject = await this.gitLabService.findProjectByName(projectName);
+        
+        if (!gitLabProject) {
+          this.winstonService.error(`GitLab project ${projectName} not found`);
+          return false;
+        }
+        
+        project.gitLabProjectId = gitLabProject.id;
       }
 
-      await this.gitLabService.createPipeline(project.gitLabProjectId, "main", {
+      // Создаем pipeline с переменной STOP_CONTAINER
+      const pipeline = await this.gitLabService.createPipeline(project.gitLabProjectId, "main", {
         STOP_CONTAINER: "true",
       });
+
+      this.winstonService.debug(`Created stop pipeline ${pipeline.id} for project ${project.gitLabProjectId}`);
+
+      // Ждем немного чтобы pipeline запустился
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       await this.syncCleanupWithBackend(project);
 
@@ -181,6 +243,19 @@ export class ProjectService {
     this.storeService.delete(projectId);
   }
 
+  async cleanupTempFiles(projectId: string): Promise<void> {
+    const project = this.storeService.get(projectId);
+    if (!project) return;
+
+    this.winstonService.debug(`Cleaning up temp files for project: ${projectId}`);
+    
+    const keepTempFiles = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
+    
+    if (!keepTempFiles && existsSync(project.path)) {
+      rmSync(project.path, { recursive: true, force: true });
+    }
+  }
+
   private async syncCleanupWithBackend(project: TempProjectType): Promise<void> {
     try {
       const modelId = parseInt(project.modelId, 10);
@@ -232,43 +307,10 @@ export class ProjectService {
     writeFileSync(fullPath, content);
   }
 
-  private async syncToGitLabService(project: TempProjectType): Promise<number> {
-    this.winstonService.debug(`Syncing project ${project.id} to GitLab`);
-    const projectName = `${this.prefix}-${project.modelId}-${project.graphId}`;
-    
-    let gitLabProject = await this.gitLabService.findProjectByName(projectName);
-    
-    if (!gitLabProject) {
-      this.winstonService.debug(`Creating new GitLab project: ${projectName}`);
-      gitLabProject = await this.gitLabService.createProject({
-        name: projectName,
-        description: `Compiler project for model ${project.modelId}, graph ${project.graphId}`,
-        visibility: "private",
-      });
-      this.winstonService.debug(`Created GitLab project: ${gitLabProject.name} (ID: ${gitLabProject.id})`);
-    } else {
-      this.winstonService.debug(`Using existing GitLab project: ${gitLabProject.name} (ID: ${gitLabProject.id})`);
-    }
-    
-    project.gitLabProjectId = gitLabProject.id;
-    await this.gitLabService.pushToRepository(project.path, gitLabProject.id, gitLabProject.httpUrlToRepo);
-    return gitLabProject.id;
-  }
-
   private async gitCmdService(cwd: string, ...args: string[]): Promise<void> {
     const result = await this.terminalService.execute({ command: "git", args, cwd });
     if (result.code !== 0) {
       this.winstonService.warn(`Git command failed: git ${args.join(" ")} — ${result.stderr}`);
-    }
-  }
-
-  private async triggerPipelineService(project: TempProjectType, projectId: number): Promise<number> {
-    try {
-      const pipeline = await this.gitLabService.createPipeline(projectId, "main");
-      return pipeline.id;
-    } catch (error) {
-      this.winstonService.warn(`Failed to trigger GitLab pipeline: ${error}`);
-      return 0;
     }
   }
 

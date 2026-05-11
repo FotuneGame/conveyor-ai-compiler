@@ -10,6 +10,7 @@ import type { GitLabProjectType, GitLabPipelineType, GitLabJobType, CreateGitLab
 export class GitLabService {
   private readonly baseUrl: string;
   private readonly token: string;
+  private readonly internalUrl: string | undefined;
 
   constructor(
     private readonly httpService: HttpService,
@@ -19,6 +20,22 @@ export class GitLabService {
   ) {
     this.baseUrl = this.configService.get<string>("core.gitlab.baseUrl", "https://gitlab.com");
     this.token = this.configService.get<string>("core.gitlab.token", "");
+    this.internalUrl = this.configService.get<string>("core.gitlab.internalUrl");
+  }
+
+  /**
+   * Преобразует внешний URL GitLab во внутренний для использования внутри Docker сети
+   * Например: http://localhost:8080 -> http://gitlab:80
+   */
+  private getInternalGitUrl(httpUrlToRepo: string): string {
+    if (!this.internalUrl) {
+      return httpUrlToRepo;
+    }
+
+    // Заменяем внешний URL на внутренний
+    // Например: http://localhost:8080/root/project.git -> http://gitlab:80/root/project.git
+    const externalUrlPattern = /^https?:\/\/[^\/]+/;
+    return httpUrlToRepo.replace(externalUrlPattern, this.internalUrl);
   }
 
   private getHeaders(): Record<string, string> {
@@ -30,6 +47,13 @@ export class GitLabService {
 
   async createProject(data: CreateGitLabProjectType): Promise<GitLabProjectType> {
     this.winstonService.debug(`Creating GitLab project: ${data.name}`);
+
+    // Сначала проверяем существует ли проект
+    const existing = await this.findProjectByName(data.name);
+    if (existing) {
+      this.winstonService.debug(`Project ${data.name} already exists (ID: ${existing.id})`);
+      return existing;
+    }
 
     try {
       const payload: Record<string, unknown> = {
@@ -47,19 +71,31 @@ export class GitLabService {
         })
       );
 
-      return this.mapProject(response.data);
+      const project = this.mapProject(response.data);
+      this.winstonService.debug(`Created GitLab project: ${project.name} (ID: ${project.id})`);
+      
+      // Даем время на синхронизацию
+      await this.delay(1000);
+      
+      return project;
     } catch (error: any) {
-      // Проверяем если проект уже существует (ошибка 400)
+      this.winstonService.error(`Failed to create GitLab project: ${error}`);
+      
+      // Если ошибка 400 - возможно проект был создан параллельно
       if (error?.response?.status === 400) {
-        this.winstonService.debug(`Project ${data.name} already exists, searching for it`);
-        const existing = await this.findProjectByName(data.name);
-        if (existing) {
-          return existing;
+        this.winstonService.debug(`Project might already exist, searching...`);
+        const found = await this.findProjectByName(data.name);
+        if (found) {
+          return found;
         }
       }
-      this.winstonService.error(`Failed to create GitLab project: ${error}`);
+      
       throw new InternalServerErrorException("Failed to create GitLab project");
     }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   async createPipeline(projectId: number, ref: string, variables?: Record<string, string>): Promise<GitLabPipelineType> {
@@ -91,23 +127,63 @@ export class GitLabService {
     this.winstonService.debug(`Searching GitLab project by name: ${name}`);
 
     try {
-      // Ищем проект по имени через search API
-      const response = await firstValueFrom(
+      // Сначала пробуем поиск через API search
+      const searchResponse = await firstValueFrom(
         this.httpService.get<{ projects: GitLabProjectType[] }>(
-          `${this.baseUrl}/api/v4/projects?search=${encodeURIComponent(name)}&owned=true&per_page=10`,
+          `${this.baseUrl}/api/v4/projects?search=${encodeURIComponent(name)}&owned=true&per_page=20`,
           { headers: this.getHeaders() }
         )
       );
 
-      const projects = response.data.projects || [];
-      const found = projects.find(p => p.name === name);
+      const searchProjects = searchResponse.data.projects || [];
+      const found = searchProjects.find(p => p.name === name);
       
       if (found) {
-        this.winstonService.debug(`Found GitLab project: ${found.name} (ID: ${found.id})`);
+        this.winstonService.debug(`Found GitLab project via search: ${found.name} (ID: ${found.id})`);
         return found;
       }
 
-      this.winstonService.debug(`Project ${name} not found`);
+      // Если не нашли через поиск, пробуем получить все проекты пользователя
+      this.winstonService.debug(`Project not found in search, fetching all projects...`);
+      
+      let allProjects: GitLabProjectType[] = [];
+      let page = 1;
+      const perPage = 100;
+      
+      while (true) {
+        const response = await firstValueFrom(
+          this.httpService.get<GitLabProjectType[]>(
+            `${this.baseUrl}/api/v4/projects?owned=true&per_page=${perPage}&page=${page}`,
+            { headers: this.getHeaders() }
+          )
+        );
+        
+        const projects = response.data || [];
+        if (projects.length === 0) {
+          break;
+        }
+        
+        allProjects = allProjects.concat(projects);
+        
+        const foundInPage = projects.find(p => p.name === name);
+        if (foundInPage) {
+          this.winstonService.debug(`Found GitLab project via list: ${foundInPage.name} (ID: ${foundInPage.id})`);
+          return foundInPage;
+        }
+        
+        if (projects.length < perPage) {
+          break;
+        }
+        
+        page++;
+        
+        // Защита от бесконечного цикла
+        if (page > 10) {
+          break;
+        }
+      }
+
+      this.winstonService.debug(`Project ${name} not found after checking all projects`);
       return null;
     } catch (error) {
       this.winstonService.error(`Failed to find GitLab project: ${error}`);
@@ -117,29 +193,39 @@ export class GitLabService {
 
   async pushToRepository(projectPath: string, projectId: number, httpUrlToRepo: string): Promise<void> {
     this.winstonService.debug(`Pushing code to GitLab repository: ${httpUrlToRepo}`);
+    this.winstonService.debug(`Project ID: ${projectId}, Path: ${projectPath}`);
 
     const token = this.configService.get<string>("core.gitlab.token", "");
 
     try {
+      // Проверяем что проект существует на диске
+      const lsResult = await this.terminalService.execute({
+        command: "ls",
+        args: ["-la"],
+        cwd: projectPath,
+      });
+      this.winstonService.debug(`Project path contents: ${lsResult.stdout}`);
+
       // Инициализируем git если нужно
-      await this.terminalService.execute({
+      const initResult = await this.terminalService.execute({
         command: "git",
         args: ["init"],
         cwd: projectPath,
-      }).catch(() => {});
+      });
+      this.winstonService.debug(`Git init result: ${initResult.stdout} ${initResult.stderr}`);
 
       // Настраиваем пользователя
       await this.terminalService.execute({
         command: "git",
         args: ["config", "user.email", "compiler@example.com"],
         cwd: projectPath,
-      }).catch(() => {});
+      });
 
       await this.terminalService.execute({
         command: "git",
         args: ["config", "user.name", "Compiler"],
         cwd: projectPath,
-      }).catch(() => {});
+      });
 
       // Устанавливаем основную ветку как main
       await this.terminalService.execute({
@@ -161,18 +247,22 @@ export class GitLabService {
 
       // Добавляем remote с токеном в URL
       const authenticatedUrl = httpUrlToRepo.replace('http://', `http://oauth2:${token}@`);
-      await this.terminalService.execute({
+      this.winstonService.debug(`Adding remote origin: ${authenticatedUrl}`);
+      
+      const addRemoteResult = await this.terminalService.execute({
         command: "git",
         args: ["remote", "add", "origin", authenticatedUrl],
         cwd: projectPath,
       });
+      this.winstonService.debug(`Add remote result: ${addRemoteResult.stdout} ${addRemoteResult.stderr}`);
 
       // Добавляем все файлы
-      await this.terminalService.execute({
+      const addResult = await this.terminalService.execute({
         command: "git",
         args: ["add", "."],
         cwd: projectPath,
       });
+      this.winstonService.debug(`Git add result: ${addResult.stdout} ${addResult.stderr}`);
 
       // Проверяем есть ли что коммитить
       const statusResult = await this.terminalService.execute({
@@ -180,6 +270,8 @@ export class GitLabService {
         args: ["status", "--porcelain"],
         cwd: projectPath,
       });
+
+      this.winstonService.debug(`Git status: ${statusResult.stdout}`);
 
       if (!statusResult.stdout || statusResult.stdout.trim() === "") {
         this.winstonService.debug("No changes to commit");
@@ -193,19 +285,28 @@ export class GitLabService {
         cwd: projectPath,
       });
 
+      this.winstonService.debug(`Commit result: code=${commitResult.code}, stdout=${commitResult.stdout}, stderr=${commitResult.stderr}`);
+
       if (commitResult.code !== 0) {
         this.winstonService.warn(`No changes to commit: ${commitResult.stderr}`);
-        // Проверяем есть ли файлы
-        const lsResult = await this.terminalService.execute({
+        const lsResult2 = await this.terminalService.execute({
           command: "ls",
           args: ["-la"],
           cwd: projectPath,
         });
-        this.winstonService.warn(`Project path contents: ${lsResult.stdout}`);
+        this.winstonService.warn(`Project path contents: ${lsResult2.stdout}`);
         throw new InternalServerErrorException("No files to commit");
       }
 
       this.winstonService.debug(`Commit successful`);
+
+      // Проверяем remote перед push
+      const remoteResult = await this.terminalService.execute({
+        command: "git",
+        args: ["remote", "-v"],
+        cwd: projectPath,
+      });
+      this.winstonService.debug(`Remote list: ${remoteResult.stdout}`);
 
       // Отправляем код с force push для автоматического разрешения конфликтов
       const result = await this.terminalService.execute({
@@ -218,6 +319,8 @@ export class GitLabService {
           GIT_TERMINAL_PROMPT: "0",
         },
       });
+
+      this.winstonService.debug(`Push result: code=${result.code}, stdout=${result.stdout}, stderr=${result.stderr}`);
 
       if (result.code !== 0) {
         this.winstonService.error(`Failed to push to repository: ${result.stderr}`);

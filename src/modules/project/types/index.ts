@@ -1,1 +1,1 @@
-export type * from './project.types.ts';
+export type * from './project.types';

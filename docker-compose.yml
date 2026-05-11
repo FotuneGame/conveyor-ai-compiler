@@ -87,6 +87,7 @@ services:
     container_name: gitlab-runner
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
+    privileged: true
     command:
       - |
         if [ ! -f /etc/gitlab-runner/config.toml ]; then
@@ -96,6 +97,7 @@ services:
             --token glrt-J7b846axwBjrj0Q5mU3b9m86MQp0OjEKdToxCw.01.120y9u5o4 \
             --tag-list compiler \
             --executor docker \
+            --docker-privileged \
             --description 'compiler-runner' \
             --docker-image docker:latest \
             --docker-volumes /var/run/docker.sock:/var/run/docker.sock \

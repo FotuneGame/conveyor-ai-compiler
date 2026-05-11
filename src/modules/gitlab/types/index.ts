@@ -1,1 +1,1 @@
-export type * from './gitlab.types.ts';
+export type * from './gitlab.types';
