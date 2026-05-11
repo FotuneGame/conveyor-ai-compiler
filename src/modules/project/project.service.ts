@@ -259,7 +259,7 @@ export class ProjectService {
     project.gitLabProjectId = newProject.id;
     
     // Отправляем код в новый репозиторий с force push
-    await this.gitLabService.pushToRepository(project.path, newProject.id, projectName);
+    await this.gitLabService.pushToRepository(project.path, newProject.id, newProject.httpUrlToRepo);
 
     return newProject.id;
   }

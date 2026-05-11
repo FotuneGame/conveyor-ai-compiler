@@ -115,7 +115,7 @@ MAX_REQUESTS_LIMIT=10
 
 COMPILER_SECRET=test-compiler-secret
 
-GITLAB_BASE_URL=https://gitlab.com
+GITLAB_BASE_URL=http://localhost:8080
 GITLAB_TOKEN=your-gitlab-token-here
 
 KEEP_TEMP_FILES=false
@@ -145,4 +145,26 @@ HASH_ROUNDS=12
 MAX_REQUESTS_TTL_MS=5000
 MAX_REQUESTS_LIMIT=10
 
+```
+
+## If you need local Gitlab and Gitlab self-hosted runner
+
+Start for GitLab runner: 
+1) Run Redis and Postgree
+2) Run GitLab
+3) Login root, password MySecurePass123!
+3) Create access token for compiler
+```
+- GITLAB_TOKEN=some-token
+```
+4) Create token for gitlab runner
+5) Set token in docker-compose for gitlab-runner
+```
+--token glrt-some-token
+```
+6) Run GitLab runner 
+
+If you need change gitlab root password in docker-compose.yaml
+```
+- GITLAB_ROOT_PASSWORD=MySecurePass123!
 ```

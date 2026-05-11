@@ -106,62 +106,61 @@ export class GitLabService {
     }
   }
 
-  async pushToRepository(projectPath: string, projectId: number, projectName: string): Promise<void> {
-    this.winstonService.debug(`Pushing code to GitLab repository: ${projectName}`);
+async pushToRepository(projectPath: string, projectId: number, httpUrlToRepo: string): Promise<void> {
+    this.winstonService.debug(`Pushing code to GitLab repository: ${httpUrlToRepo}`);
 
     const token = this.configService.get<string>("core.gitlab.token", "");
 
     try {
-      // Инициализируем git если нужно
       await this.terminalService.execute({
         command: "git",
         args: ["init"],
         cwd: projectPath,
-      }).catch(() => {});
+      });
 
-      // Настраиваем пользователя
+      await this.terminalService.execute({
+        command: "git",
+        args: ["branch", "-M", "main"],
+        cwd: projectPath,
+      });
+
       await this.terminalService.execute({
         command: "git",
         args: ["config", "user.email", "compiler@example.com"],
         cwd: projectPath,
-      }).catch(() => {});
+      });
 
       await this.terminalService.execute({
         command: "git",
         args: ["config", "user.name", "Compiler"],
         cwd: projectPath,
-      }).catch(() => {});
+      });
 
-      // Удаляем существующий remote если есть
       await this.terminalService.execute({
         command: "git",
         args: ["remote", "remove", "origin"],
         cwd: projectPath,
       }).catch(() => {});
 
-      // Добавляем remote
-      const remoteUrl = `https://oauth2:${token}@${this.baseUrl.replace('/api/v4', '').replace('https://', '')}/${projectName}.git`;
+      const authenticatedUrl = httpUrlToRepo.replace('https://', `https://oauth2:${token}@`);
       await this.terminalService.execute({
         command: "git",
-        args: ["remote", "add", "origin", remoteUrl],
+        args: ["remote", "add", "origin", authenticatedUrl],
         cwd: projectPath,
       });
 
-      // Добавляем все файлы
       await this.terminalService.execute({
         command: "git",
         args: ["add", "."],
         cwd: projectPath,
       });
 
-      // Коммитим
       await this.terminalService.execute({
         command: "git",
         args: ["commit", "-m", `Compiler build ${Date.now()}`],
         cwd: projectPath,
-      }).catch(() => {});
+      });
 
-      // Отправляем код с force push для автоматического разрешения конфликтов
       const result = await this.terminalService.execute({
         command: "git",
         args: ["push", "--force", "-u", "origin", "main"],
@@ -173,7 +172,7 @@ export class GitLabService {
         throw new InternalServerErrorException("Failed to push code to GitLab");
       }
 
-      this.winstonService.debug(`Successfully pushed code to ${projectName}`);
+      this.winstonService.debug(`Successfully pushed code to ${httpUrlToRepo}`);
     } catch (error) {
       this.winstonService.error(`Failed to push to repository: ${error}`);
       throw new InternalServerErrorException("Failed to push code to GitLab");
@@ -223,8 +222,8 @@ export class GitLabService {
     return {
       id: data.id as number,
       name: data.name as string,
-      path: data.path as string,
       webUrl: data.web_url as string,
+      path: data.path_with_namespace as string,
       httpUrlToRepo: data.http_url_to_repo as string,
     };
   }

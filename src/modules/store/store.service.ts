@@ -79,6 +79,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
   }
 
   delete(projectId: string): void {
+    const keepTempFiles = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
+    if(keepTempFiles)
+      return;
     delete this.projects[projectId];
     this.saveStore();
   }

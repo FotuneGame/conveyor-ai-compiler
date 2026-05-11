@@ -1,6 +1,5 @@
 version: '3.8'
 
-name: conveyor-ai-compiler
 services:
   compiler:
     build: .
@@ -18,25 +17,13 @@ services:
       - LOG_MAX_SIZE=5242880
       - LOG_MAX_FILES=5
       - LOG_MAX_DAYS=30
-      - SWAGGER_TITLE=API Documentation
-      - SWAGGER_DESCRIPTION=API для работы курсовой
-      - SWAGGER_VERSION=1.0
-      - SWAGGER_PATH=docs
-      - SWAGGER_CONTACT_NAME=Developer
-      - SWAGGER_CONTACT_URL=https://vk.com/id244759286
-      - SWAGGER_CONTACT_EMAIL=titovgrisha04@gmail.com
-      - MAX_REQUESTS_TTL_MS=5000
-      - MAX_REQUESTS_LIMIT=10
+      - BACKEND_URL=http://localhost:5000
       - COMPILER_SECRET=test-compiler-secret
-      - GITLAB_BASE_URL=https://gitlab.com
-      - GITLAB_TOKEN=your-gitlab-token-here
-      - GITLAB_PROJECT_ID=0
-      - GITLAB_NAMESPACE_ID=0
-      - DOCKER_REGISTRY=registry.gitlab.com
+      - GITLAB_BASE_URL=http://localhost:8080
+      - GITLAB_TOKEN=glpat-xs8lA5qHIjwmp7e__F4nSm86MQp1OjEH.01.0w1giv585
+      - KEEP_TEMP_FILES=false
       - COMPILER_TEMP_DIR=/app/tmp/compiler-projects
       - ENV_PATH=/app/public/example.env
-    env_file:
-      - .env
     volumes:
       - ./logs:/app/logs
       - ./public:/app/public
@@ -44,13 +31,96 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - app-network
+    depends_on:
+      gitlab:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: gitlab-redis
+    restart: always
+    command: --loglevel warning
+    volumes:
+      - redis-data:/data
+    networks:
+      - gitlab-network
+
+  postgresql:
+    image: postgres:16-alpine
+    container_name: gitlab-postgresql
+    restart: always
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    networks:
+      - gitlab-network
+    environment:
+      - POSTGRES_USER=gitlab
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=gitlabhq_production
+
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: gitlab
+    restart: always
+    ports:
+      - "8080:80"
+      - "8022:22"
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    networks:
+      - gitlab-network
+      - app-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/health | grep -q '^200$'"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/-/health || exit 1"]
       interval: 30s
-      timeout: 15s
-      retries: 3
-      start_period: 120s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    environment:
+      - GITLAB_ROOT_PASSWORD=MySecurePass123!
+      - GITLAB_OMNIBUS_CONFIG=external_url 'http://localhost:8080'; nginx['listen_port']=80
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:latest
+    container_name: gitlab-runner
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ ! -f /etc/gitlab-runner/config.toml ]; then
+          echo "🔄 Registering GitLab Runner..."
+          gitlab-runner register --non-interactive \
+            --url http://gitlab:80 \
+            --token glrt-J7b846axwBjrj0Q5mU3b9m86MQp0OjEKdToxCw.01.120y9u5o4 \
+            --executor docker \
+            --description 'compiler-runner' \
+            --docker-image docker:latest \
+            --docker-volumes /var/run/docker.sock:/var/run/docker.sock \
+            --docker-volumes /cache
+          echo "✅ Registration complete. Configure tags in GitLab UI."
+        fi
+        echo "🚀 Starting GitLab Runner..."
+        gitlab-runner run
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - gitlab-network
+    depends_on:
+      gitlab:
+        condition: service_healthy
+    
+
+volumes:
+  redis-data:
+  postgresql-data:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
 
 networks:
   app-network:
+    driver: bridge
+  gitlab-network:
     driver: bridge
