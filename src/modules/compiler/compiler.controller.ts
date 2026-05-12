@@ -17,7 +17,7 @@ export class CompilerController {
   async compile(@Body() data: CompileRequestType): Promise<CompileResultType> {
     const { model, graph, nodes, dataTypes, nodeTypes, protocolTypes } = data;
 
-    // Сначала создаем GitLab проект чтобы получить path
+    // Сначала создаем GitLab проект чтобы получить path и id
     const projectName = `compiler-typescript-${model.id}-${graph.id}`;
     const gitLabProject = await this.gitLabService.createProject({
       name: projectName,
@@ -25,7 +25,7 @@ export class CompilerController {
       visibility: "private",
     });
 
-    // Создаем временный проект с GitLab path
+    // Создаем временный проект с GitLab path и id
     const project = await this.projectService.createTempProject({
       model,
       graph,
@@ -34,6 +34,7 @@ export class CompilerController {
       nodeTypes,
       protocolTypes,
       gitLabProjectPath: gitLabProject.path,
+      gitLabProjectId: gitLabProject.id,
     });
 
     const result = await this.projectService.compileProject(project.id);

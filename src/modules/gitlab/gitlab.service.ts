@@ -79,7 +79,6 @@ export class GitLabService {
     return this.mapPipeline(response.data);
   }
 
-  /** Пушит код в репозиторий через git CLI */
   async pushToRepository(projectPath: string, projectId: number, httpUrlToRepo: string): Promise<void> {
     const token = this.configService.get<string>("core.gitlab.token", "");
 
