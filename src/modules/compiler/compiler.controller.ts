@@ -41,26 +41,19 @@ export class CompilerController {
   }
 
   @Post("/stop")
-  async stop(@Body() data: StopRequestType): Promise<void> {
+  async stop(@Body() data: StopRequestType): Promise<{ success: boolean; message: string }> {
     const { model, graph } = data;
 
-    const project = await this.projectService.findProjectByModelAndGraph(model.id, graph.id);
-
-    if (!project) {
-      throw new HttpException(
-        { message: "Project not found", modelId: model.id, graphId: graph.id },
-        HttpStatus.NOT_FOUND
-      );
-    }
-
-    const stopped = await this.projectService.stopProject(project.id);
+    const stopped = await this.projectService.stopProject(model.id, graph.id);
 
     if (!stopped) {
       throw new HttpException(
-        { message: "Failed to stop project", projectId: project.id },
+        { message: "Failed to stop project", modelId: model.id, graphId: graph.id },
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
+
+    return { success: true, message: "Container stop pipeline triggered via GitLab CI/CD" };
   }
 
   @Get("models/:modelId/graphs/:graphId/logs")

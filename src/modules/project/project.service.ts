@@ -95,15 +95,12 @@ export class ProjectService {
   }
 
   async compileProject(projectId: string): Promise<CompileResultType> {
-    const project = await this.getProject(projectId);
+    const project = await this.getTempProject(projectId);
     if (!project) return this.errorResult(projectId, "Project not found");
 
     try {
       const gitLabProjectId = project.gitlab?.project?.id!;
       const gitLabProjectPath = project.gitlab?.project?.path!;
-
-      project.gitlab!.project!.id = gitLabProjectId;
-      this.storeService.set(projectId, project);
 
       const gitLabUrl = this.configService.get<string>('core.gitlab.url', 'http://localhost:8080');
       await this.gitLabService.pushToRepository(project.path, gitLabProjectId, `${gitLabUrl}/${gitLabProjectPath}.git`);
@@ -112,10 +109,9 @@ export class ProjectService {
       if(!pipeline){
         pipeline = await this.gitLabService.createPipeline(gitLabProjectId, 'main')
       }
-      project.gitlab!.pipeline = { id: pipeline.id };
-      this.storeService.set(projectId, project);
 
-      await this.cleanupTempFiles(projectId);
+      await this.cleanupProject(projectId);
+
       return {
         success: true,
         projectId: project.id,
@@ -129,19 +125,18 @@ export class ProjectService {
       };
     } catch (err: any) {
       this.winstonService.error(`Compile failed: ${err?.message || err}`);
-      await this.cleanupTempFiles(projectId);
+      await this.cleanupProject(projectId);
       return this.errorResult(projectId, err?.message || "Unknown error");
     }
   }
 
-  async stopProject(projectId: string): Promise<boolean> {
-    const project = await this.getProject(projectId);
+  async stopProject(modelId: number, graphId: number): Promise<boolean> {
+    const project = await this.findProjectByModelAndGraph(modelId, graphId);
     if (!project?.gitlab?.project?.id) return false;
 
     try {
       await this.gitLabService.createPipeline(project.gitlab.project.id, "main", { STOP_CONTAINER: "true" });
       await new Promise((r) => setTimeout(r, 2000));
-      await this.cleanupProject(projectId);
       return true;
     } catch (err) {
       this.winstonService.error(`Stop failed: ${err}`);
@@ -154,8 +149,10 @@ export class ProjectService {
     if (!project?.gitlab?.project?.id) return null;
 
     const gitLabProjectId = project.gitlab.project.id;
-    const pipelineId = project.gitlab?.pipeline?.id ?? (await this.gitLabService.getLatestPipeline(gitLabProjectId))?.id;
-    if (!pipelineId) return null;
+    const pipeline = await this.gitLabService.getLatestPipeline(gitLabProjectId);
+    if (!pipeline) return null;
+
+    const pipelineId = pipeline.id;
 
     try {
       const jobs = await this.gitLabService.getPipelineJobs(gitLabProjectId, pipelineId);
@@ -178,59 +175,64 @@ export class ProjectService {
     const stored = this.storeService.findProjectByModelAndGraph(modelId, graphId);
     if (stored?.gitlab?.project?.id) return stored;
 
-    const gitLabProject = await this.gitLabService.findProjectByName(this.getProjectName(modelId, graphId));
-    if (!gitLabProject) {
-      this.winstonService.debug(`Project not found in GitLab: ${this.getProjectName(modelId, graphId)}`);
-      return null;
+    const projectName = this.getProjectName(modelId, graphId);
+    const gitLabProject = await this.gitLabService.findProjectByName(projectName);
+    
+    if (gitLabProject) {
+      return {
+        id: `gitlab-${gitLabProject.id}`,
+        path: "",
+        graphId: modelId,
+        modelId,
+        containerName: `${this.prefix}-${modelId}-${graphId}`,
+        imageName: `${this.prefix}-${modelId}-${graphId}:latest`,
+        createdAt: new Date(),
+        gitlab: {
+          project: {
+            id: gitLabProject.id,
+            path: gitLabProject.path,
+          },
+        },
+      };
     }
 
+    const gitLabProjectNew = await this.gitLabService.createProject({
+      name: projectName,
+      description: `Compiler project for model ${modelId}`,
+      visibility: "private",
+    });
+
+    await this.gitLabService.setProjectVariables(gitLabProjectNew.id, [
+      { key: 'COMPILER_SECRET', value: this.compilerSecret, protected: false, masked: false, raw: true },
+      { key: 'BACKEND_URL', value: this.backendUrl, protected: false, masked: false, raw: true },
+    ]);
+
     return {
-      id: `gitlab-${gitLabProject.id}`,
+      id: `gitlab-${gitLabProjectNew.id}`,
       path: "",
-      graphId,
+      graphId: modelId,
       modelId,
       containerName: `${this.prefix}-${modelId}-${graphId}`,
       imageName: `${this.prefix}-${modelId}-${graphId}:latest`,
       createdAt: new Date(),
       gitlab: {
         project: {
-          id: gitLabProject.id,
-          path: gitLabProject.path,
+          id: gitLabProjectNew.id,
+          path: gitLabProjectNew.path,
         },
       },
     };
   }
 
-  private async getProject(projectId: string): Promise<ProjectType | null> {
+  private async getTempProject(projectId: string): Promise<ProjectType | null> {
     const stored = this.storeService.get(projectId);
     if (stored) return stored;
-
-    if (projectId.startsWith("gitlab-")) {
-      const gitLabId = Number(projectId.replace("gitlab-", ""));
-      if (!isNaN(gitLabId)) {
-        return {
-          id: projectId,
-          path: "",
-          graphId: 0,
-          modelId: 0,
-          containerName: "",
-          imageName: "",
-          createdAt: new Date(),
-          gitlab: {
-            project: {
-              id: gitLabId,
-              path: "",
-            },
-          },
-        };
-      }
-    }
     return null;
   }
 
   private async cleanupTempFiles(projectId: string): Promise<void> {
     if (this.keepTemp) return;
-    const project = await this.getProject(projectId);
+    const project = await this.getTempProject(projectId);
     if (project?.path && existsSync(project.path)) {
       this.winstonService.debug(`Cleaning up temp files: ${project.path}`);
       rmSync(project.path, { recursive: true, force: true });
@@ -238,7 +240,6 @@ export class ProjectService {
   }
 
   async cleanupProject(projectId: string): Promise<void> {
-    if (projectId.startsWith("gitlab-")) return;
     await this.cleanupTempFiles(projectId);
     this.storeService.delete(projectId);
   }
