@@ -89,19 +89,19 @@ describe('Compiler (e2e)', () => {
     }, longRunningTimeout);
   });
 
-  // describe('POST /stop', () => {
-  //   it('should return 401 without auth', () => {
-  //     return request(app.getHttpServer()).post('/stop').send({ modelId: 1, graphId: 1 }).expect(401);
-  //   }, defaultTimeout);
+  describe('POST /stop', () => {
+    it('should return 401 without auth', () => {
+      return request(app.getHttpServer()).post('/stop').send({ modelId: 1, graphId: 1 }).expect(401);
+    }, defaultTimeout);
 
-  //   it('should attempt stop project with auth', () => {
-  //     return request(app.getHttpServer())
-  //       .post('/stop')
-  //       .set('Authorization', `Bearer ${compilerSecret}`)
-  //       .send({ modelId: 1, graphId: 1 })
-  //       .expect(201);
-  //   }, longRunningTimeout);
-  // });
+    it('should attempt stop project with auth', () => {
+      return request(app.getHttpServer())
+        .post('/stop')
+        .set('Authorization', `Bearer ${compilerSecret}`)
+        .send({ modelId: 1, graphId: 1 })
+        .expect(201);
+    }, longRunningTimeout);
+  });
 
   describe('GET /models/:modelId/graphs/:graphId/logs', () => {
     it('should return 401 without auth', () => {

@@ -25,6 +25,7 @@ export type CreateTempProjectType = {
   nodeTypes: NodeTypeType[];
   protocolTypes: ProtocolTypeType[];
   customEnv?: Record<string, string>;
+  gitLabProjectPath?: string;
 };
 
 export type CompileResultType = {

@@ -4,39 +4,46 @@ import { randomUUID } from "crypto";
 import { join, dirname } from "path";
 import { rmSync, mkdirSync, existsSync, writeFileSync } from "fs";
 import { WinstonService } from "../../shared/logger/winston.service";
+import { TerminalService } from "../terminal/terminal.service";
 import { GitLabService } from "../gitlab/gitlab.service";
 import { TemplateService } from "../template/template.service";
+import { BackendService } from "../backend/backend.service";
 import { StoreService } from "../store/store.service";
 import type { TempProjectType, CreateTempProjectType, CompileResultType, ContainerLogsType } from "./types";
-
-
 
 @Injectable()
 export class ProjectService {
   private readonly prefix: string;
   private readonly tempDir: string;
+  private readonly registry: string;
   private readonly keepTemp: boolean;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly winstonService: WinstonService,
+    private readonly terminalService: TerminalService,
     private readonly gitLabService: GitLabService,
     private readonly templateService: TemplateService,
+    private readonly backendService: BackendService,
     private readonly storeService: StoreService,
   ) {
-    this.prefix = this.configService.get("core.compiler.name", "compiler-typescript");
-    this.tempDir = this.configService.get("core.compiler.tempDir", "./tmp/compiler-projects");
-    this.keepTemp = this.configService.get("core.compiler.keepTempFiles", false);
+    this.prefix = this.configService.get<string>("core.compiler.name", "compiler-typescript");
+    this.tempDir = this.configService.get<string>("core.compiler.tempDir", "./tmp/compiler-projects");
+    this.registry = this.configService.get<string>("core.gitlab.registry", "http://localhost:8081");
+    this.keepTemp = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
   }
 
-
-
-  async createTempProject(data: CreateTempProjectType): Promise<TempProjectType> {
+  async createTempProject(data: CreateTempProjectType & { gitLabProjectPath?: string }): Promise<TempProjectType> {
     const id = randomUUID();
     const path = join(this.tempDir, id);
     this.ensureDir(path);
 
-    for (const file of this.templateService.generateFiles(data)) {
+    const templateContext = {
+      ...data,
+      gitLabProjectPath: data.gitLabProjectPath || `root/${this.getProjectName(data.model.id, data.graph.id)}`,
+    };
+
+    for (const file of this.templateService.generateFiles(templateContext)) {
       const fullPath = join(path, file.path);
       const content = file.path === ".env" && data.customEnv
         ? this.templateService.patchEnvFile(file.content, data.customEnv)
@@ -87,7 +94,7 @@ export class ProjectService {
         projectId: project.id,
         projectPath: project.path,
         containerName: project.containerName,
-        imageName: project.imageName,
+        imageName: `${this.registry}/${gitLabProject.path}`,
         gitLabProjectId: gitLabProject.id,
         gitLabPipelineId: pipeline.id,
       };
@@ -105,7 +112,7 @@ export class ProjectService {
     try {
       await this.gitLabService.createPipeline(project.gitLabProjectId, "main", { STOP_CONTAINER: "true" });
       await new Promise((r) => setTimeout(r, 2000));
-      await this.cleanupProject(projectId); // файлы + store (если проект реальный)
+      await this.cleanupProject(projectId);
       return true;
     } catch (err) {
       this.winstonService.error(`Stop failed: ${err}`);
@@ -138,18 +145,15 @@ export class ProjectService {
   }
 
   async findProjectByModelAndGraph(modelId: number, graphId: number): Promise<TempProjectType | null> {
-    // 1. Ищем в store
     const stored = this.storeService.findProjectByModelAndGraph(modelId, graphId);
     if (stored?.gitLabProjectId) return stored;
 
-    // 2. Ищем в GitLab по имени
     const gitLabProject = await this.gitLabService.findProjectByName(this.getProjectName(modelId, graphId));
     if (!gitLabProject) {
       this.winstonService.debug(`Project not found in GitLab: ${this.getProjectName(modelId, graphId)}`);
       return null;
     }
 
-    // 3. Возвращаем виртуальный проект
     return {
       id: `gitlab-${gitLabProject.id}`,
       path: "",
@@ -162,11 +166,6 @@ export class ProjectService {
     };
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // PRIVATE HELPERS
-  // ─────────────────────────────────────────────────────────────
-
-  /** Получает проект: из store или виртуальный для gitlab-* IDs */
   private async getProject(projectId: string): Promise<TempProjectType | null> {
     const stored = this.storeService.get(projectId);
     if (stored) return stored;
@@ -189,7 +188,6 @@ export class ProjectService {
     return null;
   }
 
-  /** Удаляет только файлы (для compile) */
   private async cleanupTempFiles(projectId: string): Promise<void> {
     if (this.keepTemp) return;
     const project = await this.getProject(projectId);
@@ -199,9 +197,8 @@ export class ProjectService {
     }
   }
 
-  /** Удаляет файлы + запись в store (для stop/cleanup) */
   async cleanupProject(projectId: string): Promise<void> {
-    if (projectId.startsWith("gitlab-")) return; // виртуальные проекты не в store
+    if (projectId.startsWith("gitlab-")) return;
     await this.cleanupTempFiles(projectId);
     this.storeService.delete(projectId);
   }

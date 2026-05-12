@@ -17,4 +17,5 @@ export type TemplateContextType = {
   dataTypes: DataType[];
   nodeTypes: NodeTypeType[];
   protocolTypes: ProtocolTypeType[];
+  gitLabProjectPath: string;
 };

@@ -79,12 +79,13 @@ export class TemplateService {
   }
 
   private generateGitlabCi(ctx: TemplateContextType): string {
-    const { model } = ctx;
+    const { model, gitLabProjectPath } = ctx;
     const name = `${model.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${model.tag.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
     
     const registryHost = this.registry.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    // const imageName = `${registryHost}/${this.prefix}-image-${name}`;
-    const imageName = `localhost:5081/root/compiler-typescript-1-1`;
+    const projectPath = gitLabProjectPath || `root/${this.prefix}-${model.id}-${model.tag}`;
+    const imageName = `${registryHost}/${projectPath}`;
+    
     const containerName = `${this.prefix}-container-${name}`;
     const modelId = model.id;
 
@@ -104,7 +105,6 @@ export class TemplateService {
       "    - docker ps",
     ].join("\n");
 
-    // Вариант как в видео (самый стандартный)
     const registryLogin = 
       "git config --global --add safe.directory /builds/$CI_PROJECT_PATH && " +
       "echo \"$CI_REGISTRY_PASSWORD\" | docker login \"$CI_REGISTRY\" -u \"$CI_REGISTRY_USER\" --password-stdin";
