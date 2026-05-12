@@ -69,7 +69,7 @@ export class TemplateService {
   }
 
   private generateDockerfile(ctx: CompileRequestType): string {
-    const customEnv = (ctx.graph as any).customEnv ?? (ctx.graph as any).env;
+    const { customEnv } = ctx;
     const port = customEnv?.PORT ?? "3000";
     return [
       "FROM node:20-alpine",
@@ -86,16 +86,15 @@ export class TemplateService {
   }
 
   private generateGitlabCi(ctx: CompileRequestType): string {
-    const { model, graph, gitlab } = ctx;
+    const { model, graph, gitlab, customEnv } = ctx;
     const registryHost = this.registry.replace(/^https?:\/\//, '').replace(/\/$/, '');
     const projectPath = gitlab?.project?.path ?? `root/${this.prefix}-${model.id}-${graph.id}`;
     const imageName = `${registryHost}/${projectPath}`;
     
     const containerName = `${this.prefix}-container-${model.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${model.tag.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
     const modelId = model.id;
-    const port = (graph as any).customEnv?.PORT ?? "3000";
+    const port = customEnv?.PORT ?? "3000";
 
-    const backendUrl = "http://localhost:5000";
     const registryLogin = 
       "git config --global --add safe.directory /builds/$CI_PROJECT_PATH && " +
       "echo \"$CI_REGISTRY_PASSWORD\" | docker login \"$CI_REGISTRY\" -u \"$CI_REGISTRY_USER\" --password-stdin";
