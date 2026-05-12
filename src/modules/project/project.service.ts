@@ -103,6 +103,7 @@ export class ProjectService {
       const gitLabProjectPath = project.gitlab?.project?.path!;
 
       const gitLabUrl = this.configService.get<string>('core.gitlab.url', 'http://localhost:8080');
+      await this.gitLabService.cancelActivePipelines(gitLabProjectId);
       await this.gitLabService.pushToRepository(project.path, gitLabProjectId, `${gitLabUrl}/${gitLabProjectPath}.git`);
       
       let pipeline = await this.gitLabService.getLatestPipeline(gitLabProjectId);

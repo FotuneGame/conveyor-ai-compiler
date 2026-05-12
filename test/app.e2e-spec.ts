@@ -64,29 +64,29 @@ describe('Compiler (e2e)', () => {
     }, defaultTimeout);
   });
 
-  // describe('POST /compilate', () => {
-  //   it('should return 401 without auth', () => {
-  //     return request(app.getHttpServer())
-  //       .post('/compilate')
-  //       .send({ model: {}, graph: {}, nodes: [], dataTypes: {}, nodeTypes: {}, protocolTypes: {} })
-  //       .expect(401);
-  //   }, defaultTimeout);
+  describe('POST /compilate', () => {
+    it('should return 401 without auth', () => {
+      return request(app.getHttpServer())
+        .post('/compilate')
+        .send({ model: {}, graph: {}, nodes: [], dataTypes: {}, nodeTypes: {}, protocolTypes: {} })
+        .expect(401);
+    }, defaultTimeout);
 
-  //   it('should attempt compile with auth', () => {
-  //     return request(app.getHttpServer())
-  //       .post('/compilate')
-  //       .set('Authorization', `Bearer ${compilerSecret}`)
-  //       .send({
-  //         model: mockModel,
-  //         graph: mockGraph,
-  //         nodes: mockNodes,
-  //         dataTypes: mockDataTypes,
-  //         nodeTypes: mockNodeTypes,
-  //         protocolTypes: mockProtocolTypes,
-  //       })
-  //       .expect(201);
-  //   }, longRunningTimeout);
-  // });
+    it('should attempt compile with auth', () => {
+      return request(app.getHttpServer())
+        .post('/compilate')
+        .set('Authorization', `Bearer ${compilerSecret}`)
+        .send({
+          model: mockModel,
+          graph: mockGraph,
+          nodes: mockNodes,
+          dataTypes: mockDataTypes,
+          nodeTypes: mockNodeTypes,
+          protocolTypes: mockProtocolTypes,
+        })
+        .expect(201);
+    }, longRunningTimeout);
+  });
 
   describe('POST /stop', () => {
     it('should return 401 without auth', () => {

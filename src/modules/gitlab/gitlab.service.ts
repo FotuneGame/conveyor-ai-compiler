@@ -140,7 +140,33 @@ export class GitLabService {
     }
   }
 
+  async cancelActivePipelines(projectId: number): Promise<void> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<GitLabPipelineType[]>(
+          `${this.url}/api/v4/projects/${projectId}/pipelines?status=running&per_page=100`,
+          { headers: this.getHeaders() }
+        )
+      );
+      await Promise.all(
+        response.data.map(pipeline =>
+          firstValueFrom(
+            this.httpService.post(
+              `${this.url}/api/v4/projects/${projectId}/pipelines/${pipeline.id}/cancel`,
+              {},
+              { headers: this.getHeaders() }
+            )
+          ).catch(() => {})
+        )
+      );
+    } catch {
+      // Игнорируем ошибки при отмене
+    }
+  }
+
   async createPipeline(projectId: number, ref: string, variables?: Record<string, string>): Promise<GitLabPipelineType> {
+    await this.cancelActivePipelines(projectId);
+
     const payload: Record<string, unknown> = { ref };
     if (variables && Object.keys(variables).length > 0) {
       payload.variables = Object.entries(variables).map(([key, value]) => ({
@@ -193,7 +219,6 @@ export class GitLabService {
     if (!status.stdout?.trim()) return; // нет изменений
 
     await git(["commit", "-m", `Compiler build ${Date.now()}`]);
-
     await this.unprotectBranch(projectId, 'main');
     
     const push = await git(["push", "--force", "-u", "origin", "main"], {
