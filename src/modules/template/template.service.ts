@@ -1,7 +1,10 @@
 ﻿import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { WinstonService } from "src/shared/logger/winston.service";
-import type { GeneratedFileType, TemplateContextType } from "./types";
+import type { GeneratedFileType } from "./types";
+import type { CompileRequestType } from "../compiler/types";
+
+
 
 @Injectable()
 export class TemplateService {
@@ -16,7 +19,7 @@ export class TemplateService {
     this.registry = this.configService.get<string>("core.gitlab.registry", "http://localhost:8081");
   }
 
-  generateFiles(context: TemplateContextType): GeneratedFileType[] {
+  generateFiles(context: CompileRequestType): GeneratedFileType[] {
     this.winstonService.debug(`Generating files for model ${context.model.id}/graph ${context.graph.id}`);
 
     return [
@@ -42,9 +45,9 @@ export class TemplateService {
     return `${baseEnv}\n${customLines}`;
   }
 
-  private generateEnv(ctx: TemplateContextType): string {
+  private generateEnv(ctx: CompileRequestType): string {
     const { model, graph } = ctx;
-    const env = {
+    const baseEnv = {
       NODE_ENV: "production",
       PORT: "3000",
       GRAPH_ID: String(graph.id),
@@ -52,7 +55,9 @@ export class TemplateService {
       MODEL_NAME: model.name,
       MODEL_TAG: model.tag,
     };
-    return Object.entries(env).map(([k, v]) => `${k}=${v}`).join("\n");
+    const customEnv = (graph as any).customEnv ?? (graph as any).env;
+    const mergedEnv = { ...baseEnv, ...customEnv };
+    return Object.entries(mergedEnv).map(([k, v]) => `${k}=${v}`).join("\n");
   }
 
   private generateGitignore(): string {
@@ -63,32 +68,34 @@ export class TemplateService {
     return ["node_modules", "npm-debug.log", ".git"].join("\n");
   }
 
-  private generateDockerfile(ctx: TemplateContextType): string {
+  private generateDockerfile(ctx: CompileRequestType): string {
+    const customEnv = (ctx.graph as any).customEnv ?? (ctx.graph as any).env;
+    const port = customEnv?.PORT ?? "3000";
     return [
       "FROM node:20-alpine",
-      "",
       "WORKDIR /app",
       "COPY package*.json ./",
       "RUN npm install",
       "COPY . .",
       "RUN npm run build",
       "",
-      "EXPOSE ${PORT:-3000}",
+      `EXPOSE ${port}`,
+      `ENV PORT=${port}`,
       'CMD ["npm", "run", "start:prod"]',
     ].join("\n");
   }
 
-  private generateGitlabCi(ctx: TemplateContextType): string {
-    const { model, gitLabProjectPath } = ctx;
-    const name = `${model.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}:${model.tag.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
-    
+  private generateGitlabCi(ctx: CompileRequestType): string {
+    const { model, graph, gitlab } = ctx;
     const registryHost = this.registry.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    const projectPath = gitLabProjectPath || `root/${this.prefix}-${model.id}:${model.tag}`;
+    const projectPath = gitlab?.project?.path ?? `root/${this.prefix}-${model.id}-${graph.id}`;
     const imageName = `${registryHost}/${projectPath}`;
     
-    const containerName = `${this.prefix}-container-${name}`;
+    const containerName = `${this.prefix}-container-${model.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${model.tag.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
     const modelId = model.id;
+    const port = (graph as any).customEnv?.PORT ?? "3000";
 
+    const backendUrl = "http://localhost:5000";
     const registryLogin = 
       "git config --global --add safe.directory /builds/$CI_PROJECT_PATH && " +
       "echo \"$CI_REGISTRY_PASSWORD\" | docker login \"$CI_REGISTRY\" -u \"$CI_REGISTRY_USER\" --password-stdin";
@@ -103,6 +110,7 @@ export class TemplateService {
       `  DOCKER_IMAGE: "${imageName}"`,
       `  CONTAINER_NAME: ${containerName}`,
       `  MODEL_ID: ${modelId}`,
+      `  EXTERNAL_PORT: '${port}'`,
       "  DOCKER_DRIVER: overlay2",
       "  DOCKER_TLS_CERTDIR: ''",
       "",
@@ -139,21 +147,20 @@ export class TemplateService {
       `    - ${registryLogin}`,
       "  script:",
       "    - echo 'Starting container...'",
-      "    - export EXTERNAL_PORT=$(grep '^PORT=' .env 2>/dev/null | cut -d'=' -f2 | head -1 || echo '3000')",
       "    - docker pull ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
       "    - docker stop $CONTAINER_NAME || true",
       "    - docker rm $CONTAINER_NAME || true",
-      "    - docker run -d --name $CONTAINER_NAME -p $EXTERNAL_PORT:3000 ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
+      `    - docker run -d --name $CONTAINER_NAME -p ${port}:${port} \${DOCKER_IMAGE}:\${CI_COMMIT_SHA}`,
       "    - sleep 10",
       "    - docker ps",
       "    - echo 'Registering container in backend...'",
       "    - |",
       "      CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $CONTAINER_NAME 2>/dev/null || echo 'localhost')",
-      "      ENDPOINT_URL=\"http://$CONTAINER_IP:$EXTERNAL_PORT\"",
-      "      DOCKER_URL=\"http://$CONTAINER_IP:3000\"",
-      "      LOGS_URL=\"${BACKEND_URL}/logs/$MODEL_ID/$CONTAINER_NAME\"",
-      "      curl -s -X POST \"${BACKEND_URL}/api/compiler/models/$MODEL_ID/containers\" \\",
-      "        -H \"Authorization: Bearer $COMPILER_SECRET\" \\",
+      `      ENDPOINT_URL=\"http://$CONTAINER_IP:${port}\"`,
+      `      DOCKER_URL=\"http://$CONTAINER_IP:${port}\"`,
+      "      LOGS_URL=\"${backendUrl}/logs/$MODEL_ID/$CONTAINER_NAME\"",
+      "      curl -s -X POST \"${backendUrl}/api/compiler/models/$MODEL_ID/containers\" \\",
+      "        -H \"Authorization: Bearer \\$COMPILER_SECRET\" \\",
       "        -H \"Content-Type: application/json\" \\",
       "        -d \"{\\\"name\\\": \\\"$CONTAINER_NAME\\\", \\\"logsUrl\\\": \\\"$LOGS_URL\\\", \\\"dockerUrl\\\": \\\"$DOCKER_URL\\\", \\\"endpointUrl\\\": \\\"$ENDPOINT_URL\\\"}\" || echo 'Container registration skipped'",
       "    - echo 'Container deployed and registered'",
@@ -172,11 +179,11 @@ export class TemplateService {
       "    - docker stop $CONTAINER_NAME || true",
       "    - echo 'Updating container status in backend...'",
       "    - |",
-      "      CONTAINER_INFO=$(curl -s -H \"Authorization: Bearer $COMPILER_SECRET\" \"${BACKEND_URL}/api/compiler/models/$MODEL_ID/containers\" 2>/dev/null || echo '{}')",
-      "      CONTAINER_ID=$(echo $CONTAINER_INFO | jq -r '.data[] | select(.name == \"$CONTAINER_NAME\") | .id' 2>/dev/null || echo '')",
+      "      CONTAINER_INFO=$(curl -s -H \"Authorization: Bearer \\$COMPILER_SECRET\" \"${backendUrl}/api/compiler/models/$MODEL_ID/containers\" 2>/dev/null || echo '{}')",
+      "      CONTAINER_ID=$(echo $CONTAINER_INFO | jq -r \".data[] | select(.name == \\\"$CONTAINER_NAME\\\") | .id\" 2>/dev/null || echo '')",
       "      if [ -n \"$CONTAINER_ID\" ] && [ \"$CONTAINER_ID\" != \"null\" ]; then",
-      "        curl -s -X PATCH \"${BACKEND_URL}/api/compiler/models/$MODEL_ID/containers/$CONTAINER_ID\" \\",
-      "          -H \"Authorization: Bearer $COMPILER_SECRET\" \\",
+      "        curl -s -X PATCH \"${backendUrl}/api/compiler/models/$MODEL_ID/containers/$CONTAINER_ID\" \\",
+      "          -H \"Authorization: Bearer \\$COMPILER_SECRET\" \\",
       "          -H \"Content-Type: application/json\" \\",
       "          -d '{\"active\": false, \"status\": \"stopped\"}' || echo 'Container status update skipped'",
       "        echo 'Container status updated in backend'",
@@ -198,7 +205,7 @@ export class TemplateService {
     ].join("\n");
   }
 
-  private generatePackageJson(ctx: TemplateContextType): string {
+  private generatePackageJson(ctx: CompileRequestType): string {
     const { model } = ctx;
     const name = model.name.toLowerCase().replace(/[^a-z0-9]/g, "-");
     
@@ -250,7 +257,7 @@ export class TemplateService {
     }, null, 2);
   }
 
-  private generateMainFile(ctx: TemplateContextType): string {
+  private generateMainFile(ctx: CompileRequestType): string {
     const { model } = ctx;
     return [
       "import { App } from './app';",
@@ -269,7 +276,7 @@ export class TemplateService {
     ].join("\n");
   }
 
-  private generateAppFile(ctx: TemplateContextType): string {
+  private generateAppFile(ctx: CompileRequestType): string {
     const { nodes } = ctx;
     const nodesInfo = nodes.map(n => `    // Node: ${n.name} (${n.type.name})`).join("\n");
 

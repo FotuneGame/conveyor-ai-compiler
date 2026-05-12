@@ -1,30 +1,34 @@
 import { Controller, Post, Get, Body, Param, UseGuards, ParseIntPipe, HttpException, HttpStatus } from "@nestjs/common";
 import { AuthGuard } from "../../common/guards/auth.guard";
 import { ProjectService } from "../project/project.service";
-import type { CompileRequestType, NodeType } from "./types";
-import type { CompileResultType, ContainerLogsType } from "../project/types";
+import type { CompileRequestType, CompileResultType, ContainerLogsType, StopRequestType } from "./types";
+import { EnvConfigService } from "../env-config";
 
 @UseGuards(AuthGuard)
 @Controller()
 export class CompilerController {
   constructor(
     private readonly projectService: ProjectService,
+    private readonly envConfigService: EnvConfigService,
   ) {}
 
   @Post("/compilate")
   async compile(@Body() data: CompileRequestType): Promise<CompileResultType> {
     const { model, graph, nodes, dataTypes, nodeTypes, protocolTypes } = data;
+    const defaultEnvConfig = await this.envConfigService.getDefaultEnvConfig();
+    const customEnv = this.envConfigService.parseEnv(graph.env || defaultEnvConfig);
 
     const project = await this.projectService.createTempProject({
       model,
       graph,
-      nodes: nodes as unknown as NodeType[],
+      nodes,
       dataTypes,
       nodeTypes,
       protocolTypes,
+      customEnv,
     });
 
-    const result = await this.projectService.compileProject(project.id, project.gitLabProjectPath);
+    const result = await this.projectService.compileProject(project.id);
 
     if (!result.success) {
       throw new HttpException(
@@ -37,14 +41,14 @@ export class CompilerController {
   }
 
   @Post("/stop")
-  async stop(@Body() data: { modelId: number; graphId: number }): Promise<{ success: boolean; message: string }> {
-    const { modelId, graphId } = data;
+  async stop(@Body() data: StopRequestType): Promise<void> {
+    const { model, graph } = data;
 
-    const project = await this.projectService.findProjectByModelAndGraph(modelId, graphId);
+    const project = await this.projectService.findProjectByModelAndGraph(model.id, graph.id);
 
     if (!project) {
       throw new HttpException(
-        { message: "Project not found", modelId, graphId },
+        { message: "Project not found", modelId: model.id, graphId: graph.id },
         HttpStatus.NOT_FOUND
       );
     }
@@ -57,8 +61,6 @@ export class CompilerController {
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
-
-    return { success: true, message: "Container stop pipeline triggered via GitLab CI/CD" };
   }
 
   @Get("models/:modelId/graphs/:graphId/logs")

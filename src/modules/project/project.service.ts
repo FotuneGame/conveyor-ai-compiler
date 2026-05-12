@@ -7,7 +7,10 @@ import { WinstonService } from "../../shared/logger/winston.service";
 import { GitLabService } from "../gitlab/gitlab.service";
 import { TemplateService } from "../template/template.service";
 import { StoreService } from "../store/store.service";
-import type { TempProjectType, CreateTempProjectType, CompileResultType, ContainerLogsType } from "./types";
+import type { ProjectType} from "./types";
+import type { CompileRequestType, CompileResultType, ContainerLogsType } from "../compiler/types";
+
+
 
 @Injectable()
 export class ProjectService {
@@ -33,14 +36,13 @@ export class ProjectService {
     this.compilerSecret = this.configService.get<string>("COMPILER_SECRET", "test-compiler-secret");
   }
 
-  async createTempProject(data: CreateTempProjectType & { gitLabProjectPath?: string; gitLabProjectId?: number }): Promise<TempProjectType & { gitLabProjectPath: string }> {
+  async createTempProject(data: CompileRequestType): Promise<ProjectType> {
     const id = randomUUID();
     const path = join(this.tempDir, id);
     this.ensureDir(path);
 
-    // Создаем GitLab проект если его нет
-    let gitLabProjectId = data.gitLabProjectId;
-    let gitLabProjectPath = data.gitLabProjectPath;
+    let gitLabProjectId = data.gitlab?.id;
+    let gitLabProjectPath = data.gitlab?.project?.path;
 
     if (!gitLabProjectId || !gitLabProjectPath) {
       const projectName = this.getProjectName(data.model.id, data.graph.id);
@@ -52,7 +54,6 @@ export class ProjectService {
       gitLabProjectId = gitLabProject.id;
       gitLabProjectPath = gitLabProject.path;
 
-      // Устанавливаем CI/CD переменные автоматически
       await this.gitLabService.setProjectVariables(gitLabProjectId, [
         { key: 'COMPILER_SECRET', value: this.compilerSecret, protected: false, masked: false, raw: true },
         { key: 'BACKEND_URL', value: this.backendUrl, protected: false, masked: false, raw: true },
@@ -61,18 +62,19 @@ export class ProjectService {
 
     const templateContext = {
       ...data,
-      gitLabProjectPath,
+      gitlab: {
+        project: {
+          path: gitLabProjectPath,
+        },
+      },
     };
 
     for (const file of this.templateService.generateFiles(templateContext)) {
       const fullPath = join(path, file.path);
-      const content = file.path === ".env" && data.customEnv
-        ? this.templateService.patchEnvFile(file.content, data.customEnv)
-        : file.content;
-      this.writeFile(fullPath, content);
+      this.writeFile(fullPath, file.content);
     }
 
-    const project: TempProjectType = {
+    const project: ProjectType = {
       id,
       path,
       graphId: data.graph.id,
@@ -80,21 +82,27 @@ export class ProjectService {
       containerName: `${this.prefix}-${id}`,
       imageName: `${this.prefix}-${id}:latest`,
       createdAt: new Date(),
-      gitLabProjectId,
+      gitlab: {
+        project: {
+          id: gitLabProjectId,
+          path: gitLabProjectPath,
+        },
+      },
     };
 
     this.storeService.set(id, project);
-    return { ...project, gitLabProjectPath };
+    return project;
   }
 
-  async compileProject(projectId: string, gitLabProjectPath: string): Promise<CompileResultType> {
+  async compileProject(projectId: string): Promise<CompileResultType> {
     const project = await this.getProject(projectId);
     if (!project) return this.errorResult(projectId, "Project not found");
 
     try {
-      const gitLabProjectId = project.gitLabProjectId!;
+      const gitLabProjectId = project.gitlab?.project?.id!;
+      const gitLabProjectPath = project.gitlab?.project?.path!;
 
-      project.gitLabProjectId = gitLabProjectId;
+      project.gitlab!.project!.id = gitLabProjectId;
       this.storeService.set(projectId, project);
 
       const gitLabUrl = this.configService.get<string>('core.gitlab.url', 'http://localhost:8080');
@@ -104,7 +112,7 @@ export class ProjectService {
       if(!pipeline){
         pipeline = await this.gitLabService.createPipeline(gitLabProjectId, 'main')
       }
-      project.gitLabPipelineId = pipeline.id;
+      project.gitlab!.pipeline = { id: pipeline.id };
       this.storeService.set(projectId, project);
 
       await this.cleanupTempFiles(projectId);
@@ -114,8 +122,10 @@ export class ProjectService {
         projectPath: project.path,
         containerName: project.containerName,
         imageName: `${this.registry}/${gitLabProjectPath}`,
-        gitLabProjectId,
-        gitLabPipelineId: pipeline.id,
+        gitlab: {
+          projectId: gitLabProjectId,
+          pipelineId: pipeline.id,
+        },
       };
     } catch (err: any) {
       this.winstonService.error(`Compile failed: ${err?.message || err}`);
@@ -126,10 +136,10 @@ export class ProjectService {
 
   async stopProject(projectId: string): Promise<boolean> {
     const project = await this.getProject(projectId);
-    if (!project?.gitLabProjectId) return false;
+    if (!project?.gitlab?.project?.id) return false;
 
     try {
-      await this.gitLabService.createPipeline(project.gitLabProjectId, "main", { STOP_CONTAINER: "true" });
+      await this.gitLabService.createPipeline(project.gitlab.project.id, "main", { STOP_CONTAINER: "true" });
       await new Promise((r) => setTimeout(r, 2000));
       await this.cleanupProject(projectId);
       return true;
@@ -141,19 +151,20 @@ export class ProjectService {
 
   async getContainerLogs(modelId: number, graphId: number): Promise<ContainerLogsType | null> {
     const project = await this.findProjectByModelAndGraph(modelId, graphId);
-    if (!project?.gitLabProjectId) return null;
+    if (!project?.gitlab?.project?.id) return null;
 
-    const pipelineId = project.gitLabPipelineId ?? (await this.gitLabService.getLatestPipeline(project.gitLabProjectId))?.id;
+    const gitLabProjectId = project.gitlab.project.id;
+    const pipelineId = project.gitlab?.pipeline?.id ?? (await this.gitLabService.getLatestPipeline(gitLabProjectId))?.id;
     if (!pipelineId) return null;
 
     try {
-      const jobs = await this.gitLabService.getPipelineJobs(project.gitLabProjectId, pipelineId);
+      const jobs = await this.gitLabService.getPipelineJobs(gitLabProjectId, pipelineId);
       const jobsWithLogs = await Promise.all(
         jobs.map(async (job) => ({
           id: job.id,
           name: job.name,
           status: job.status,
-          logs: await this.gitLabService.getJobTrace(project.gitLabProjectId!, job.id),
+          logs: await this.gitLabService.getJobTrace(gitLabProjectId, job.id),
         }))
       );
       return { pipelineId, jobs: jobsWithLogs };
@@ -163,9 +174,9 @@ export class ProjectService {
     }
   }
 
-  async findProjectByModelAndGraph(modelId: number, graphId: number): Promise<TempProjectType | null> {
+  async findProjectByModelAndGraph(modelId: number, graphId: number): Promise<ProjectType | null> {
     const stored = this.storeService.findProjectByModelAndGraph(modelId, graphId);
-    if (stored?.gitLabProjectId) return stored;
+    if (stored?.gitlab?.project?.id) return stored;
 
     const gitLabProject = await this.gitLabService.findProjectByName(this.getProjectName(modelId, graphId));
     if (!gitLabProject) {
@@ -181,11 +192,16 @@ export class ProjectService {
       containerName: `${this.prefix}-${modelId}-${graphId}`,
       imageName: `${this.prefix}-${modelId}-${graphId}:latest`,
       createdAt: new Date(),
-      gitLabProjectId: gitLabProject.id,
+      gitlab: {
+        project: {
+          id: gitLabProject.id,
+          path: gitLabProject.path,
+        },
+      },
     };
   }
 
-  private async getProject(projectId: string): Promise<TempProjectType | null> {
+  private async getProject(projectId: string): Promise<ProjectType | null> {
     const stored = this.storeService.get(projectId);
     if (stored) return stored;
 
@@ -200,7 +216,12 @@ export class ProjectService {
           containerName: "",
           imageName: "",
           createdAt: new Date(),
-          gitLabProjectId: gitLabId,
+          gitlab: {
+            project: {
+              id: gitLabId,
+              path: "",
+            },
+          },
         };
       }
     }

@@ -3,7 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { WinstonService } from "../../shared/logger/winston.service";
-import type { TempProjectType, StoreType } from "./types";
+import type {StoreType } from "./types";
+import type { ProjectType } from "../project/types";
 
 
 
@@ -49,12 +50,12 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  set(projectId: string, project: TempProjectType): void {
+  set(projectId: string, project: ProjectType): void {
     this.projects[projectId] = project;
     this.saveStore();
   }
 
-  get(projectId: string): TempProjectType | undefined {
+  get(projectId: string): ProjectType | undefined {
     const project = this.projects[projectId];
     if (!project) return undefined;
     return {
@@ -65,8 +66,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
   delete(projectId: string): void {
     const keepTempFiles = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
-    if(keepTempFiles)
-      return;
+    if (keepTempFiles) return;
     delete this.projects[projectId];
     this.saveStore();
   }
@@ -75,13 +75,13 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
     return this.projects;
   }
 
-  findProjectByModelAndGraph(modelId: number, graphId: number): TempProjectType | undefined {
+  findProjectByModelAndGraph(modelId: number, graphId: number): ProjectType | undefined {
     const projects = Object.values(this.projects).filter(
       p => Number(p.modelId) === modelId && Number(p.graphId) === graphId
     );
     
     if (projects.length === 0) {
-      this.winstonService.warn(`[Store] ✗ Not found for modelId="${modelId}", graphId="${graphId}"`);
+      this.winstonService.warn(`[Store] Not found for modelId="${modelId}", graphId="${graphId}"`);
       return undefined;
     }
     

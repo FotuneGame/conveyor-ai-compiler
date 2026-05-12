@@ -5,7 +5,7 @@ import { EnvConfigService } from "./env-config.service";
 export class EnvConfigController {
   constructor(private readonly envConfigService: EnvConfigService) {}
 
-  @Get("default")
+  @Get("/default")
   async getDefaultEnv(): Promise<string> {
     return await this.envConfigService.getDefaultEnvConfig();
   }

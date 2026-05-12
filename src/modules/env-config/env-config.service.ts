@@ -31,6 +31,33 @@ export class EnvConfigService {
     }
   }
 
+  parseEnv(envContent: string): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    const lines = envContent.split(/\r?\n/);
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex === -1) continue;
+
+      const key = trimmed.substring(0, separatorIndex).trim();
+      let value = trimmed.substring(separatorIndex + 1).trim();
+
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+
+      result[key] = value;
+    }
+
+    return result;
+  }
+
   private getFallbackEnvConfig(): string {
     return `NODE_ENV=production\nPORT=3000\n`;
   }

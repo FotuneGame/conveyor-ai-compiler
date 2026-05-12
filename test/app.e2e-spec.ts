@@ -91,14 +91,14 @@ describe('Compiler (e2e)', () => {
 
   describe('POST /stop', () => {
     it('should return 401 without auth', () => {
-      return request(app.getHttpServer()).post('/stop').send({ modelId: 1, graphId: 1 }).expect(401);
+      return request(app.getHttpServer()).post('/stop').send({ model: mockModel, graph: mockGraph }).expect(401);
     }, defaultTimeout);
 
     it('should attempt stop project with auth', () => {
       return request(app.getHttpServer())
         .post('/stop')
         .set('Authorization', `Bearer ${compilerSecret}`)
-        .send({ modelId: 1, graphId: 1 })
+        .send({ model: mockModel, graph: mockGraph  })
         .expect(201);
     }, longRunningTimeout);
   });
