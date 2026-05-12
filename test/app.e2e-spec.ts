@@ -20,7 +20,6 @@ const mockModel = {
 
 const mockGraph = {
   id: 1,
-  env: 'test',
   compiler: null,
 };
 
