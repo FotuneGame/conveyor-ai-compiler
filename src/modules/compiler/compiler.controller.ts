@@ -1,7 +1,6 @@
 import { Controller, Post, Get, Body, Param, UseGuards, ParseIntPipe, HttpException, HttpStatus } from "@nestjs/common";
 import { AuthGuard } from "../../common/guards/auth.guard";
 import { ProjectService } from "../project/project.service";
-import { GitLabService } from "../gitlab/gitlab.service";
 import type { CompileRequestType, NodeType } from "./types";
 import type { CompileResultType, ContainerLogsType } from "../project/types";
 
@@ -10,22 +9,12 @@ import type { CompileResultType, ContainerLogsType } from "../project/types";
 export class CompilerController {
   constructor(
     private readonly projectService: ProjectService,
-    private readonly gitLabService: GitLabService,
   ) {}
 
   @Post("/compilate")
   async compile(@Body() data: CompileRequestType): Promise<CompileResultType> {
     const { model, graph, nodes, dataTypes, nodeTypes, protocolTypes } = data;
 
-    // Сначала создаем GitLab проект чтобы получить path и id
-    const projectName = `compiler-typescript-${model.id}-${graph.id}`;
-    const gitLabProject = await this.gitLabService.createProject({
-      name: projectName,
-      description: `Compiler project for model ${model.id}`,
-      visibility: "private",
-    });
-
-    // Создаем временный проект с GitLab path и id
     const project = await this.projectService.createTempProject({
       model,
       graph,
@@ -33,11 +22,9 @@ export class CompilerController {
       dataTypes,
       nodeTypes,
       protocolTypes,
-      gitLabProjectPath: gitLabProject.path,
-      gitLabProjectId: gitLabProject.id,
     });
 
-    const result = await this.projectService.compileProject(project.id);
+    const result = await this.projectService.compileProject(project.id, project.gitLabProjectPath);
 
     if (!result.success) {
       throw new HttpException(

@@ -33,14 +33,29 @@ export class ProjectService {
     this.keepTemp = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
   }
 
-  async createTempProject(data: CreateTempProjectType & { gitLabProjectPath?: string; gitLabProjectId?: number }): Promise<TempProjectType> {
+  async createTempProject(data: CreateTempProjectType & { gitLabProjectPath?: string; gitLabProjectId?: number }): Promise<TempProjectType & { gitLabProjectPath: string }> {
     const id = randomUUID();
     const path = join(this.tempDir, id);
     this.ensureDir(path);
 
+    // Создаем GitLab проект если его нет
+    let gitLabProjectId = data.gitLabProjectId;
+    let gitLabProjectPath = data.gitLabProjectPath;
+
+    if (!gitLabProjectId || !gitLabProjectPath) {
+      const projectName = this.getProjectName(data.model.id, data.graph.id);
+      const gitLabProject = await this.gitLabService.createProject({
+        name: projectName,
+        description: `Compiler project for model ${data.model.id}`,
+        visibility: "private",
+      });
+      gitLabProjectId = gitLabProject.id;
+      gitLabProjectPath = gitLabProject.path;
+    }
+
     const templateContext = {
       ...data,
-      gitLabProjectPath: data.gitLabProjectPath || `root/${this.getProjectName(data.model.id, data.graph.id)}`,
+      gitLabProjectPath,
     };
 
     for (const file of this.templateService.generateFiles(templateContext)) {
@@ -59,49 +74,26 @@ export class ProjectService {
       containerName: `${this.prefix}-${id}`,
       imageName: `${this.prefix}-${id}:latest`,
       createdAt: new Date(),
-      gitLabProjectId: data.gitLabProjectId,
+      gitLabProjectId,
     };
 
     this.storeService.set(id, project);
-    return project;
+    return { ...project, gitLabProjectPath };
   }
 
-  async compileProject(projectId: string): Promise<CompileResultType> {
+  async compileProject(projectId: string, gitLabProjectPath: string): Promise<CompileResultType> {
     const project = await this.getProject(projectId);
     if (!project) return this.errorResult(projectId, "Project not found");
 
     try {
-      // Если GitLab проект уже создан (передан через createTempProject), используем его
-      let gitLabProjectId = project.gitLabProjectId;
-      let gitLabProjectPath: string | undefined;
-
-      if (!gitLabProjectId) {
-        // Создаем GitLab проект если его нет
-        const name = this.getProjectName(project.modelId, project.graphId);
-        const gitLabProject = await this.gitLabService.createProject({
-          name,
-          description: `Compiler project for model ${project.modelId}`,
-          visibility: "private",
-        });
-        gitLabProjectId = gitLabProject.id;
-        gitLabProjectPath = gitLabProject.path;
-      } else {
-        // Ищем существующий проект по ID чтобы получить path
-        const projectName = this.getProjectName(project.modelId, project.graphId);
-        const existingProject = await this.gitLabService.findProjectByName(projectName);
-        if (existingProject) {
-          gitLabProjectPath = existingProject.path;
-        }
-      }
-
-      if (!gitLabProjectPath) {
-        gitLabProjectPath = `root/${this.getProjectName(project.modelId, project.graphId)}`;
-      }
+      const gitLabProjectId = project.gitLabProjectId!;
 
       project.gitLabProjectId = gitLabProjectId;
       this.storeService.set(projectId, project);
 
-      await this.gitLabService.pushToRepository(project.path, gitLabProjectId, `${this.configService.get<string>('core.gitlab.url', 'http://localhost:8080')}/${gitLabProjectPath}.git`);
+      const gitLabUrl = this.configService.get<string>('core.gitlab.url', 'http://localhost:8080');
+      await this.gitLabService.pushToRepository(project.path, gitLabProjectId, `${gitLabUrl}/${gitLabProjectPath}.git`);
+      
       let pipeline = await this.gitLabService.getLatestPipeline(gitLabProjectId);
       if(!pipeline){
         pipeline = await this.gitLabService.createPipeline(gitLabProjectId, 'main')
