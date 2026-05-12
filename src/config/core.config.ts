@@ -10,6 +10,7 @@ export interface CoreConfig {
   },
   gitlab: {
     url: string,
+    registry: string,
     token: string,
   }
 }
@@ -26,6 +27,7 @@ export default registerAs(
     },
     gitlab: {
       url: process.env.GITLAB_URL || 'http://localhost:8080',
+      registry: process.env.GITLAB_REGISTRY_URL || 'http://localhost:8081',
       token: process.env.GITLAB_TOKEN || '',
     }
   }),

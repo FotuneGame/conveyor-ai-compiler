@@ -155,12 +155,12 @@ Start for GitLab runner:
 3) Login root, password MySecurePass123!
 3) Create access token for compiler
 ```
-- GITLAB_TOKEN=some-token
+- GITLAB_TOKEN=glpat-some-token
 ```
 4) Create token for gitlab runner
 5) Set token in docker-compose for gitlab-runner
 ```
---token glrt-J7b846axwBjrj0Q5mU3b9m86MQp0OjEKdToxCw.01.120y9u5o4
+- REGISTRATION_TOKEN=glrt-some-token
 ```
 6) Set tags in web and docker-compose
 6) Run GitLab runner 

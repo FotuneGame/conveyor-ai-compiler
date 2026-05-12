@@ -21,7 +21,8 @@ export class GitLabService {
     this.token = this.configService.get<string>("core.gitlab.token", "");
   }
 
-  /** Создаёт проект или возвращает существующий по имени */
+
+
   async createProject(data: CreateGitLabProjectType): Promise<GitLabProjectType> {
     this.winstonService.debug(`Creating GitLab project: ${data.name}`);
 
@@ -44,7 +45,6 @@ export class GitLabService {
     }
   }
 
-  /** Ищет проект по имени в личном неймспейсе пользователя токена */
   async findProjectByName(name: string): Promise<GitLabProjectType | null> {
     try {
       const response = await firstValueFrom(
@@ -60,10 +60,14 @@ export class GitLabService {
     }
   }
 
-  /** Создаёт pipeline для проекта */
   async createPipeline(projectId: number, ref: string, variables?: Record<string, string>): Promise<GitLabPipelineType> {
     const payload: Record<string, unknown> = { ref };
-    if (variables?.length) payload.variables = variables;
+    if (variables && Object.keys(variables).length > 0) {
+      payload.variables = Object.entries(variables).map(([key, value]) => ({
+        key,
+        value,
+      }));
+    }
 
     const response = await firstValueFrom(
       this.httpService.post(

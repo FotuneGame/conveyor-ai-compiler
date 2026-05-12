@@ -19,8 +19,9 @@ services:
       - LOG_MAX_DAYS=30
       - BACKEND_URL=http://localhost:5000
       - COMPILER_SECRET=test-compiler-secret
-      - GITLAB_URL=http://host.docker.internal:8080
-      - GITLAB_TOKEN=glpat-xs8lA5qHIjwmp7e__F4nSm86MQp1OjEH.01.0w1giv585
+      - GITLAB_URL=http://localhost:5080
+      - GITLAB_REGISTRY_URL=http://localhost:5081  
+      - GITLAB_TOKEN=glpat-JoNgYIAaFemMZyYxjVSFAm86MQp1OjEH.01.0w0mp3fsa
       - KEEP_TEMP_FILES=false
       - COMPILER_TEMP_DIR=/app/tmp/compiler-projects
       - ENV_PATH=/app/public/example.env
@@ -32,18 +33,19 @@ services:
     networks:
       - app-network
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "localhost:host-gateway"
     depends_on:
       gitlab:
         condition: service_healthy
-
+  
   gitlab:
     image: gitlab/gitlab-ce:latest
     container_name: gitlab
     restart: always
     ports:
-      - "8080:80"
-      - "8022:22"
+      - "5022:22"
+      - "5080:80"
+      - "5081:5081"
     volumes:
       - gitlab-config:/etc/gitlab
       - gitlab-logs:/var/log/gitlab
@@ -57,45 +59,57 @@ services:
       retries: 10
       start_period: 300s
     environment:
-      - GITLAB_ROOT_PASSWORD=MySecurePass123!
-      - GITLAB_OMNIBUS_CONFIG=external_url 'http://host.docker.internal:8080'; nginx['listen_port']=80; gitlab_rails['gitlab_shell_ssh_port']=8022
-
+      GITLAB_ROOT_EMAIL: titovgrisha04@gmail.com
+      GITLAB_ROOT_PASSWORD: MySecurePass123!
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:5080'
+        gitlab_rails['gitlab_shell_ssh_port'] = 5022
+        nginx['listen_port'] = 80
+        gitlab_rails['gitlab_url'] = 'http://gitlab:80'
+        gitlab_rails['internal_clone_url'] = 'http://gitlab:80'
+        gitlab_rails['registry_enabled'] = true
+        registry_external_url 'http://localhost:5081'
+        registry['external_url'] = 'http://localhost:5081'
 
   gitlab-runner:
-    image: gitlab/gitlab-runner:latest
+    image: 'gitlab/gitlab-runner:latest'
     container_name: gitlab-runner
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c"]
-    privileged: true
-    command:
-      - |
-        if [ ! -f /etc/gitlab-runner/config.toml ]; then
-          echo "🔄 Registering GitLab Runner..."
-          gitlab-runner register --non-interactive \
-            --url http://host.docker.internal:8080 \
-            --token glrt-J7b846axwBjrj0Q5mU3b9m86MQp0OjEKdToxCw.01.120y9u5o4 \
-            --tag-list "compiler" \
-            --executor docker \
-            --docker-privileged \
-            --description 'compiler-runner' \
-            --docker-image docker:latest \
-            --docker-volumes /var/run/docker.sock:/var/run/docker.sock \
-            --docker-volumes /cache
-          echo "✅ Registration complete. Configure tags in GitLab UI."
-        fi
-        echo "🚀 Starting GitLab Runner..."
-        gitlab-runner run --working-directory /etc/gitlab-runner
     volumes:
+      - '/var/run/docker.sock:/var/run/docker.sock'
       - gitlab-runner-config:/etc/gitlab-runner
-      - /var/run/docker.sock:/var/run/docker.sock
-    extra_hosts:
-      - "host.docker.internal:host-gateway" 
-    networks:
-      - app-network
+    network_mode: "host"
+    environment:
+      - CI_SERVER_URL=http://localhost:5080
+      - REGISTER_NON_INTERACTIVE=true
+      - REGISTRATION_TOKEN=glrt-5x4NP68im_ayJyaOJ4c6lm86MQp0OjEKdToxCw.01.12153558l
+    entrypoint: /bin/sh
+    command: >
+      -c '
+        echo "=== Runner starting ==="
+        if [ ! -f /etc/gitlab-runner/config.toml ] || ! grep -q "token" /etc/gitlab-runner/config.toml; then
+          echo "Registering runner...";
+          gitlab-runner register \
+            --non-interactive \
+            --url "$$CI_SERVER_URL" \
+            --registration-token "$$REGISTRATION_TOKEN" \
+            --executor docker \
+            --docker-image alpine:latest \
+            --docker-network-mode host \
+            --docker-privileged=true \
+            --docker-volumes /var/run/docker.sock:/var/run/docker.sock \
+            --run-untagged=true \
+            --locked=false \
+            --description "docker-runner";
+        else
+          echo "Runner already registered, reconfiguring...";
+        fi
+        echo "Starting gitlab-runner...";
+        gitlab-runner run
+      '
     depends_on:
       gitlab:
         condition: service_healthy
-    
 
 volumes:
   gitlab-config:

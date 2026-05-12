@@ -15,6 +15,7 @@ import type { TempProjectType, CreateTempProjectType, CompileResultType, Contain
 export class ProjectService {
   private readonly prefix: string;
   private readonly tempDir: string;
+  private readonly keepTemp: boolean;
 
   constructor(
     private readonly configService: ConfigService,
@@ -23,88 +24,91 @@ export class ProjectService {
     private readonly templateService: TemplateService,
     private readonly storeService: StoreService,
   ) {
-    this.prefix = this.configService.get<string>("core.compiler.name", "compiler-typescript");
-    this.tempDir = this.configService.get<string>("core.compiler.tempDir", "./tmp/compiler-projects");
+    this.prefix = this.configService.get("core.compiler.name", "compiler-typescript");
+    this.tempDir = this.configService.get("core.compiler.tempDir", "./tmp/compiler-projects");
+    this.keepTemp = this.configService.get("core.compiler.keepTempFiles", false);
   }
 
+
+
   async createTempProject(data: CreateTempProjectType): Promise<TempProjectType> {
-    const { model, graph, nodes, dataTypes, nodeTypes, protocolTypes, customEnv } = data;
     const id = randomUUID();
     const path = join(this.tempDir, id);
-    
     this.ensureDir(path);
-    
-    const files = this.templateService.generateFiles({ model, graph, nodes, dataTypes, nodeTypes, protocolTypes });
-    for (const file of files) {
+
+    for (const file of this.templateService.generateFiles(data)) {
       const fullPath = join(path, file.path);
-      let content = file.path === ".env" && customEnv 
-        ? this.templateService.patchEnvFile(file.content, customEnv)
+      const content = file.path === ".env" && data.customEnv
+        ? this.templateService.patchEnvFile(file.content, data.customEnv)
         : file.content;
       this.writeFile(fullPath, content);
     }
 
     const project: TempProjectType = {
-      id, path, graphId: graph.id, modelId: model.id,
+      id,
+      path,
+      graphId: data.graph.id,
+      modelId: data.model.id,
       containerName: `${this.prefix}-${id}`,
       imageName: `${this.prefix}-${id}:latest`,
       createdAt: new Date(),
     };
+
     this.storeService.set(id, project);
     return project;
   }
 
   async compileProject(projectId: string): Promise<CompileResultType> {
-    const project = this.storeService.get(projectId);
+    const project = await this.getProject(projectId);
     if (!project) return this.errorResult(projectId, "Project not found");
 
     try {
-      const projectName = this.getName(project.modelId, project.graphId);
-      
-      // Создаём/находим проект в GitLab
+      const name = this.getProjectName(project.modelId, project.graphId);
       const gitLabProject = await this.gitLabService.createProject({
-        name: projectName,
+        name,
         description: `Compiler project for model ${project.modelId}`,
         visibility: "private",
       });
-      
+
       project.gitLabProjectId = gitLabProject.id;
       this.storeService.set(projectId, project);
 
-      // Пушим код и запускаем пайплайн
       await this.gitLabService.pushToRepository(project.path, gitLabProject.id, gitLabProject.httpUrlToRepo);
-      const pipeline = await this.gitLabService.createPipeline(gitLabProject.id, "main");
-      
+      let pipeline = await this.gitLabService.getLatestPipeline(gitLabProject.id);
+      if(!pipeline){
+        pipeline = await this.gitLabService.createPipeline(gitLabProject.id, 'main')
+      }
       project.gitLabPipelineId = pipeline.id;
-      await this.cleanupTempFiles(projectId);
+      this.storeService.set(projectId, project);
 
-      return {
-        success: true, projectId: project.id, projectPath: project.path,
-        containerName: project.containerName, imageName: project.imageName,
-        gitLabProjectId: gitLabProject.id, gitLabPipelineId: pipeline.id,
-      };
-    } catch (error: any) {
-      this.winstonService.error(`Compile failed: ${error?.message || error}`);
       await this.cleanupTempFiles(projectId);
-      return this.errorResult(projectId, error?.message || "Unknown error");
+      return {
+        success: true,
+        projectId: project.id,
+        projectPath: project.path,
+        containerName: project.containerName,
+        imageName: project.imageName,
+        gitLabProjectId: gitLabProject.id,
+        gitLabPipelineId: pipeline.id,
+      };
+    } catch (err: any) {
+      this.winstonService.error(`Compile failed: ${err?.message || err}`);
+      await this.cleanupTempFiles(projectId);
+      return this.errorResult(projectId, err?.message || "Unknown error");
     }
   }
 
   async stopProject(projectId: string): Promise<boolean> {
-    const project = this.storeService.get(projectId);
+    const project = await this.getProject(projectId);
     if (!project?.gitLabProjectId) return false;
 
     try {
-      await this.gitLabService.createPipeline(
-        project.gitLabProjectId, 
-        "main", 
-        { STOP_CONTAINER: "true" }
-      );
-      await new Promise(r => setTimeout(r, 2000));
-      
-      await this.cleanupProject(projectId);
+      await this.gitLabService.createPipeline(project.gitLabProjectId, "main", { STOP_CONTAINER: "true" });
+      await new Promise((r) => setTimeout(r, 2000));
+      await this.cleanupProject(projectId); // файлы + store (если проект реальный)
       return true;
-    } catch (error) {
-      this.winstonService.error(`Stop failed: ${error}`);
+    } catch (err) {
+      this.winstonService.error(`Stop failed: ${err}`);
       return false;
     }
   }
@@ -113,68 +117,42 @@ export class ProjectService {
     const project = await this.findProjectByModelAndGraph(modelId, graphId);
     if (!project?.gitLabProjectId) return null;
 
-    let pipelineId = project.gitLabPipelineId;
-    if (!pipelineId) {
-      const latestPipeline = await this.gitLabService.getLatestPipeline(project.gitLabProjectId);
-      if (!latestPipeline) return null;
-      pipelineId = latestPipeline.id;
-    }
+    const pipelineId = project.gitLabPipelineId ?? (await this.gitLabService.getLatestPipeline(project.gitLabProjectId))?.id;
+    if (!pipelineId) return null;
 
     try {
       const jobs = await this.gitLabService.getPipelineJobs(project.gitLabProjectId, pipelineId);
       const jobsWithLogs = await Promise.all(
-        jobs.map(async job => ({
+        jobs.map(async (job) => ({
           id: job.id,
           name: job.name,
           status: job.status,
           logs: await this.gitLabService.getJobTrace(project.gitLabProjectId!, job.id),
         }))
       );
-      
       return { pipelineId, jobs: jobsWithLogs };
-    } catch (error) {
-      this.winstonService.error(`Failed to fetch logs: ${error}`);
+    } catch (err) {
+      this.winstonService.error(`Failed to fetch logs: ${err}`);
       return null;
-    }
-  }
-
-  async cleanupProject(projectId: string): Promise<void> {
-    if (projectId.startsWith('gitlab-')) return;
-    
-    const project = this.storeService.get(projectId);
-    if (!project) return;
-    await this.cleanupTempFiles(projectId);
-    this.storeService.delete(projectId);
-  }
-
-  async cleanupTempFiles(projectId: string): Promise<void> {
-    const keepTempFiles = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
-    if (keepTempFiles) return;
-    
-    const project = this.storeService.get(projectId);
-    if (project?.path && existsSync(project.path)) {
-      this.winstonService.debug(`Cleaning up temp files: ${project.path}`);
-      rmSync(project.path, { recursive: true, force: true });
     }
   }
 
   async findProjectByModelAndGraph(modelId: number, graphId: number): Promise<TempProjectType | null> {
-    let project = this.storeService.findProjectByModelAndGraph(modelId, graphId);
-    if (project?.gitLabProjectId) {
-      return project;
-    }
-    
-    const projectName = this.getName(modelId, graphId);
-    const gitLabProject = await this.gitLabService.findProjectByName(projectName);
-    
+    // 1. Ищем в store
+    const stored = this.storeService.findProjectByModelAndGraph(modelId, graphId);
+    if (stored?.gitLabProjectId) return stored;
+
+    // 2. Ищем в GitLab по имени
+    const gitLabProject = await this.gitLabService.findProjectByName(this.getProjectName(modelId, graphId));
     if (!gitLabProject) {
-      this.winstonService.debug(`Project not found in GitLab: ${projectName}`);
+      this.winstonService.debug(`Project not found in GitLab: ${this.getProjectName(modelId, graphId)}`);
       return null;
     }
-    
-    const virtualProject: TempProjectType = {
+
+    // 3. Возвращаем виртуальный проект
+    return {
       id: `gitlab-${gitLabProject.id}`,
-      path: '',
+      path: "",
       graphId,
       modelId,
       containerName: `${this.prefix}-${modelId}-${graphId}`,
@@ -182,27 +160,75 @@ export class ProjectService {
       createdAt: new Date(),
       gitLabProjectId: gitLabProject.id,
     };
-    
-    this.winstonService.debug(`Found project in GitLab: ${projectName}`);
-    return virtualProject;
   }
 
-  
+  // ─────────────────────────────────────────────────────────────
+  // PRIVATE HELPERS
+  // ─────────────────────────────────────────────────────────────
 
-  getName(modelId: number, graphId: number) { return `${this.prefix}-${modelId}-${graphId}`}
-  getProject(projectId: string) { return this.storeService.get(projectId); }
-  getAllProjects() { return Object.values(this.storeService.getAll()); }
+  /** Получает проект: из store или виртуальный для gitlab-* IDs */
+  private async getProject(projectId: string): Promise<TempProjectType | null> {
+    const stored = this.storeService.get(projectId);
+    if (stored) return stored;
 
+    if (projectId.startsWith("gitlab-")) {
+      const gitLabId = Number(projectId.replace("gitlab-", ""));
+      if (!isNaN(gitLabId)) {
+        return {
+          id: projectId,
+          path: "",
+          graphId: 0,
+          modelId: 0,
+          containerName: "",
+          imageName: "",
+          createdAt: new Date(),
+          gitLabProjectId: gitLabId,
+        };
+      }
+    }
+    return null;
+  }
 
+  /** Удаляет только файлы (для compile) */
+  private async cleanupTempFiles(projectId: string): Promise<void> {
+    if (this.keepTemp) return;
+    const project = await this.getProject(projectId);
+    if (project?.path && existsSync(project.path)) {
+      this.winstonService.debug(`Cleaning up temp files: ${project.path}`);
+      rmSync(project.path, { recursive: true, force: true });
+    }
+  }
 
-  private ensureDir(path: string) { if (!existsSync(path)) mkdirSync(path, { recursive: true }); }
+  /** Удаляет файлы + запись в store (для stop/cleanup) */
+  async cleanupProject(projectId: string): Promise<void> {
+    if (projectId.startsWith("gitlab-")) return; // виртуальные проекты не в store
+    await this.cleanupTempFiles(projectId);
+    this.storeService.delete(projectId);
+  }
+
+  private getProjectName(modelId: number, graphId: number): string {
+    return `${this.prefix}-${modelId}-${graphId}`;
+  }
+
+  private errorResult(projectId: string, error: string): CompileResultType {
+    const p = this.storeService.get(projectId);
+    return {
+      success: false,
+      projectId,
+      projectPath: p?.path ?? "",
+      containerName: p?.containerName ?? "",
+      imageName: p?.imageName ?? "",
+      error,
+    };
+  }
+
+  private ensureDir(path: string) {
+    if (!existsSync(path)) mkdirSync(path, { recursive: true });
+  }
+
   private writeFile(fullPath: string, content: string) {
     const dir = dirname(fullPath);
     if (dir && !existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(fullPath, content);
-  }
-  private errorResult(projectId: string, error: string): CompileResultType {
-    const p = this.storeService.get(projectId);
-    return { success: false, projectId, projectPath: p?.path ?? "", containerName: p?.containerName ?? "", imageName: p?.imageName ?? "", error };
   }
 }

@@ -6,12 +6,14 @@ import type { GeneratedFileType, TemplateContextType } from "./types";
 @Injectable()
 export class TemplateService {
   private readonly prefix: string;
+  private readonly registry: string;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly winstonService: WinstonService
   ) {
     this.prefix = this.configService.get<string>("core.compiler.name", "compiler-typescript");
+    this.registry = this.configService.get<string>("core.gitlab.registry", "http://localhost:8081");
   }
 
   generateFiles(context: TemplateContextType): GeneratedFileType[] {
@@ -24,6 +26,7 @@ export class TemplateService {
       { path: "Dockerfile", content: this.generateDockerfile(context) },
       { path: ".gitlab-ci.yml", content: this.generateGitlabCi(context) },
       { path: "package.json", content: this.generatePackageJson(context) },
+      { path: "tsconfig.json", content: this.generateTsConfig() },
       { path: "src/index.ts", content: this.generateMainFile(context) },
       { path: "src/app.ts", content: this.generateAppFile(context) },
     ];
@@ -53,11 +56,11 @@ export class TemplateService {
   }
 
   private generateGitignore(): string {
-    return ["node_modules/", "dist/", ".env", "*.log", ".DS_Store"].join("\n");
+    return ["node_modules/", "dist/", "*.log", ".DS_Store"].join("\n");
   }
 
   private generateDockerignore(): string {
-    return ["node_modules", "npm-debug.log", ".git", ".env.local", ".env.*.local"].join("\n");
+    return ["node_modules", "npm-debug.log", ".git"].join("\n");
   }
 
   private generateDockerfile(ctx: TemplateContextType): string {
@@ -66,7 +69,7 @@ export class TemplateService {
       "",
       "WORKDIR /app",
       "COPY package*.json ./",
-      "RUN npm ci --only=production",
+      "RUN npm install",
       "COPY . .",
       "RUN npm run build",
       "",
@@ -78,7 +81,10 @@ export class TemplateService {
   private generateGitlabCi(ctx: TemplateContextType): string {
     const { model } = ctx;
     const name = `${model.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${model.tag.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
-    const imageName = `${this.prefix}-image-${name}`;
+    
+    const registryHost = this.registry.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    // const imageName = `${registryHost}/${this.prefix}-image-${name}`;
+    const imageName = `localhost:5081/root/compiler-typescript-1-1`;
     const containerName = `${this.prefix}-container-${name}`;
     const modelId = model.id;
 
@@ -98,21 +104,24 @@ export class TemplateService {
       "    - docker ps",
     ].join("\n");
 
+    // Вариант как в видео (самый стандартный)
+    const registryLogin = 
+      "git config --global --add safe.directory /builds/$CI_PROJECT_PATH && " +
+      "echo \"$CI_REGISTRY_PASSWORD\" | docker login \"$CI_REGISTRY\" -u \"$CI_REGISTRY_USER\" --password-stdin";
+
     return [
       "default:",
-      // ✅ Убираем dind — используем обычный docker-клиент + хостовый сокет
       "  image: docker:latest",
-      // ✅ Убираем services: - docker:24-dind
       "",
       "variables:",
-      `  DOCKER_IMAGE: ${imageName}`,
+      `  CI_REGISTRY: "${registryHost}"`,
+      `  CI_REGISTRY_IMAGE: "${imageName}"`,
+      `  DOCKER_IMAGE: "${imageName}"`,
       `  CONTAINER_NAME: ${containerName}`,
-      "  DOCKER_REGISTRY: registry.gitlab.com",
       `  MODEL_ID: ${modelId}`,
-      "  BACKEND_URL: ${process.env.BACKEND_URL || 'http://host.docker.internal:3000'}",
-      "  COMPILER_SECRET: ${process.env.COMPILER_SECRET || 'test-compiler-secret'}",
-      "  EXTERNAL_PORT: 3000",
-      // ✅ Убираем DOCKER_TLS_CERTDIR и DOCKER_TLS_VERIFY — не нужны без dind
+      "  EXTERNAL_PORT: '3000'",
+      "  DOCKER_DRIVER: overlay2",
+      "  DOCKER_TLS_CERTDIR: ''",
       "",
       "stages:",
       "  - build",
@@ -124,13 +133,15 @@ export class TemplateService {
       "  stage: build",
       "  tags:",
       "    - compiler",
+      "  rules:",
+      "    - if: '$STOP_CONTAINER != \"true\"'",
       "  before_script:",
-      "    - apk add --no-cache git openssh-client",
-      "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",
+      `    - ${registryLogin}`,
       "  script:",
       "    - echo 'Building Docker image...'",
       "    - docker build -t ${DOCKER_IMAGE}:${CI_COMMIT_SHA} .",
       "    - docker tag ${DOCKER_IMAGE}:${CI_COMMIT_SHA} ${DOCKER_IMAGE}:latest",
+      "    - echo 'Pushing image...'",
       "    - docker push ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
       "    - docker push ${DOCKER_IMAGE}:latest",
       "    - echo 'Build completed'",
@@ -139,11 +150,10 @@ export class TemplateService {
       "  stage: deploy",
       "  tags:",
       "    - compiler",
-      "  before_script:",
-      "    - apk add --no-cache git openssh-client",
-      "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",
       "  rules:",
-      "    - if: '$STOP_CONTAINER == null || $STOP_CONTAINER == \"false\"'",
+      "    - if: '$STOP_CONTAINER != \"true\"'",
+      "  before_script:",
+      `    - ${registryLogin}`,
       "  script:",
       normalDeployScript,
       "",
@@ -151,11 +161,11 @@ export class TemplateService {
       "  stage: stop",
       "  tags:",
       "    - compiler",
-      "  before_script:",
-      "    - apk add --no-cache git openssh-client",
-      "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",
       "  rules:",
       "    - if: '$STOP_CONTAINER == \"true\"'",
+      "  before_script:",
+      "    - apk add --no-cache git openssh-client >/dev/null 2>&1",
+      "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",
       "  script:",
       stopContainerScript,
       "",
@@ -163,15 +173,13 @@ export class TemplateService {
       "  stage: cleanup",
       "  tags:",
       "    - compiler",
-      "  before_script:",
-      "    - apk add --no-cache git openssh-client",
-      "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",
       "  rules:",
-      "    - if: '$STOP_CONTAINER == null || $STOP_CONTAINER == \"false\"'",
+      "    - if: '$STOP_CONTAINER != \"true\"'",
+      "  before_script:",
+      `    - ${registryLogin}`,
       "  script:",
       "    - docker rmi ${DOCKER_IMAGE}:${CI_COMMIT_SHA} || true",
       "    - docker rmi ${DOCKER_IMAGE}:latest || true",
-      "  when: manual",
     ].join("\n");
   }
 
@@ -192,16 +200,38 @@ export class TemplateService {
         test: "echo 'No tests defined'",
       },
       dependencies: {
-        express: "^4.18.2",
+        express: "^4.21.0",
         cors: "^2.8.5",
-        dotenv: "^16.3.1",
+        dotenv: "^16.4.5",
       },
       devDependencies: {
+        "@types/cors": "^2.8.17",
         "@types/express": "^4.17.21",
-        "@types/node": "^20.10.0",
-        "typescript": "^5.3.0",
+        "@types/morgan": "^1.9.9",
+        "@types/node": "^20.12.12",
         "ts-node": "^10.9.2",
+        "typescript": "^5.4.5",
       },
+    }, null, 2);
+  }
+
+  private generateTsConfig(): string {
+    return JSON.stringify({
+      compilerOptions: {
+        target: "ES2020",
+        module: "commonjs",
+        outDir: "./dist",
+        rootDir: "./src",
+        strict: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        forceConsistentCasingInFileNames: true,
+        resolveJsonModule: true,
+        declaration: true,
+        moduleResolution: "node"
+      },
+      include: ["src/**/*"],
+      exclude: ["node_modules", "dist"]
     }, null, 2);
   }
 
@@ -216,7 +246,7 @@ export class TemplateService {
       "const app = new App();",
       "const port = process.env.PORT || 3000;",
       "",
-      "app.start(port).then(() => {",
+      "app.start(Number(port)).then(() => {",
       `  console.log('Server ${model.name} running on port ' + port);`,
       "  console.log('Model ID: ' + process.env.MODEL_ID);",
       "  console.log('Graph ID: ' + process.env.GRAPH_ID);",
