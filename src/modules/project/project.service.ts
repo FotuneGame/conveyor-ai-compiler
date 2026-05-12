@@ -15,6 +15,8 @@ export class ProjectService {
   private readonly tempDir: string;
   private readonly registry: string;
   private readonly keepTemp: boolean;
+  private readonly backendUrl: string;
+  private readonly compilerSecret: string;
 
   constructor(
     private readonly configService: ConfigService,
@@ -27,6 +29,8 @@ export class ProjectService {
     this.tempDir = this.configService.get<string>("core.compiler.tempDir", "./tmp/compiler-projects");
     this.registry = this.configService.get<string>("core.gitlab.registry", "http://localhost:8081");
     this.keepTemp = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
+    this.backendUrl = this.configService.get<string>("backend.baseUrl", "http://localhost:5000");
+    this.compilerSecret = this.configService.get<string>("COMPILER_SECRET", "test-compiler-secret");
   }
 
   async createTempProject(data: CreateTempProjectType & { gitLabProjectPath?: string; gitLabProjectId?: number }): Promise<TempProjectType & { gitLabProjectPath: string }> {
@@ -47,6 +51,12 @@ export class ProjectService {
       });
       gitLabProjectId = gitLabProject.id;
       gitLabProjectPath = gitLabProject.path;
+
+      // Устанавливаем CI/CD переменные автоматически
+      await this.gitLabService.setProjectVariables(gitLabProjectId, [
+        { key: 'COMPILER_SECRET', value: this.compilerSecret, protected: false, masked: false, raw: true },
+        { key: 'BACKEND_URL', value: this.backendUrl, protected: false, masked: false, raw: true },
+      ]);
     }
 
     const templateContext = {

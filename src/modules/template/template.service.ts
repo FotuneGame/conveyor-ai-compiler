@@ -80,30 +80,14 @@ export class TemplateService {
 
   private generateGitlabCi(ctx: TemplateContextType): string {
     const { model, gitLabProjectPath } = ctx;
-    const name = `${model.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${model.tag.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
+    const name = `${model.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}:${model.tag.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
     
     const registryHost = this.registry.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    const projectPath = gitLabProjectPath || `root/${this.prefix}-${model.id}-${model.tag}`;
+    const projectPath = gitLabProjectPath || `root/${this.prefix}-${model.id}:${model.tag}`;
     const imageName = `${registryHost}/${projectPath}`;
     
     const containerName = `${this.prefix}-container-${name}`;
     const modelId = model.id;
-
-    const stopContainerScript = [
-      "    - echo 'Stopping container...'",
-      "    - docker stop $CONTAINER_NAME || true",
-      "    - docker rm $CONTAINER_NAME || true",
-      "    - echo 'Container stopped successfully'",
-    ].join("\n");
-
-    const normalDeployScript = [
-      "    - docker pull ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
-      "    - docker stop $CONTAINER_NAME || true",
-      "    - docker rm $CONTAINER_NAME || true",
-      "    - docker run -d --name $CONTAINER_NAME -p $EXTERNAL_PORT:3000 ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
-      "    - sleep 10",
-      "    - docker ps",
-    ].join("\n");
 
     const registryLogin = 
       "git config --global --add safe.directory /builds/$CI_PROJECT_PATH && " +
@@ -119,7 +103,6 @@ export class TemplateService {
       `  DOCKER_IMAGE: "${imageName}"`,
       `  CONTAINER_NAME: ${containerName}`,
       `  MODEL_ID: ${modelId}`,
-      "  EXTERNAL_PORT: '3000'",
       "  DOCKER_DRIVER: overlay2",
       "  DOCKER_TLS_CERTDIR: ''",
       "",
@@ -155,7 +138,25 @@ export class TemplateService {
       "  before_script:",
       `    - ${registryLogin}`,
       "  script:",
-      normalDeployScript,
+      "    - echo 'Starting container...'",
+      "    - export EXTERNAL_PORT=$(grep '^PORT=' .env 2>/dev/null | cut -d'=' -f2 | head -1 || echo '3000')",
+      "    - docker pull ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
+      "    - docker stop $CONTAINER_NAME || true",
+      "    - docker rm $CONTAINER_NAME || true",
+      "    - docker run -d --name $CONTAINER_NAME -p $EXTERNAL_PORT:3000 ${DOCKER_IMAGE}:${CI_COMMIT_SHA}",
+      "    - sleep 10",
+      "    - docker ps",
+      "    - echo 'Registering container in backend...'",
+      "    - |",
+      "      CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $CONTAINER_NAME 2>/dev/null || echo 'localhost')",
+      "      ENDPOINT_URL=\"http://$CONTAINER_IP:$EXTERNAL_PORT\"",
+      "      DOCKER_URL=\"http://$CONTAINER_IP:3000\"",
+      "      LOGS_URL=\"${BACKEND_URL}/logs/$MODEL_ID/$CONTAINER_NAME\"",
+      "      curl -s -X POST \"${BACKEND_URL}/api/compiler/models/$MODEL_ID/containers\" \\",
+      "        -H \"Authorization: Bearer $COMPILER_SECRET\" \\",
+      "        -H \"Content-Type: application/json\" \\",
+      "        -d \"{\\\"name\\\": \\\"$CONTAINER_NAME\\\", \\\"logsUrl\\\": \\\"$LOGS_URL\\\", \\\"dockerUrl\\\": \\\"$DOCKER_URL\\\", \\\"endpointUrl\\\": \\\"$ENDPOINT_URL\\\"}\" || echo 'Container registration skipped'",
+      "    - echo 'Container deployed and registered'",
       "",
       "stop_container:",
       "  stage: stop",
@@ -164,10 +165,24 @@ export class TemplateService {
       "  rules:",
       "    - if: '$STOP_CONTAINER == \"true\"'",
       "  before_script:",
-      "    - apk add --no-cache git openssh-client >/dev/null 2>&1",
+      "    - apk add --no-cache git openssh-client curl jq >/dev/null 2>&1",
       "    - git config --global --add safe.directory /builds/$CI_PROJECT_PATH",
       "  script:",
-      stopContainerScript,
+      "    - echo 'Stopping container...'",
+      "    - docker stop $CONTAINER_NAME || true",
+      "    - echo 'Updating container status in backend...'",
+      "    - |",
+      "      CONTAINER_INFO=$(curl -s -H \"Authorization: Bearer $COMPILER_SECRET\" \"${BACKEND_URL}/api/compiler/models/$MODEL_ID/containers\" 2>/dev/null || echo '{}')",
+      "      CONTAINER_ID=$(echo $CONTAINER_INFO | jq -r '.data[] | select(.name == \"$CONTAINER_NAME\") | .id' 2>/dev/null || echo '')",
+      "      if [ -n \"$CONTAINER_ID\" ] && [ \"$CONTAINER_ID\" != \"null\" ]; then",
+      "        curl -s -X PATCH \"${BACKEND_URL}/api/compiler/models/$MODEL_ID/containers/$CONTAINER_ID\" \\",
+      "          -H \"Authorization: Bearer $COMPILER_SECRET\" \\",
+      "          -H \"Content-Type: application/json\" \\",
+      "          -d '{\"active\": false, \"status\": \"stopped\"}' || echo 'Container status update skipped'",
+      "        echo 'Container status updated in backend'",
+      "      fi",
+      "    - docker rm $CONTAINER_NAME || true",
+      "    - echo 'Container stopped successfully'",
       "",
       "cleanup:",
       "  stage: cleanup",

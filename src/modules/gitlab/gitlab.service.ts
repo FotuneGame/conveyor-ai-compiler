@@ -6,10 +6,20 @@ import { WinstonService } from "src/shared/logger/winston.service";
 import { TerminalService } from "../terminal/terminal.service";
 import type { GitLabProjectType, GitLabPipelineType, GitLabJobType, CreateGitLabProjectType } from "./types";
 
+export type ProjectVariable = {
+  key: string;
+  value: string;
+  protected?: boolean;
+  masked?: boolean;
+  raw?: boolean;
+};
+
 @Injectable()
 export class GitLabService {
   private readonly url: string;
   private readonly token: string;
+  private readonly backendUrl: string;
+  private readonly compilerSecret: string;
 
   constructor(
     private readonly httpService: HttpService,
@@ -19,9 +29,9 @@ export class GitLabService {
   ) {
     this.url = this.configService.get<string>("core.gitlab.url", "http://localhost:8080");
     this.token = this.configService.get<string>("core.gitlab.token", "");
+    this.backendUrl = this.configService.get<string>("backend.baseUrl", "http://localhost:5000");
+    this.compilerSecret = this.configService.get<string>("COMPILER_SECRET", "test-compiler-secret");
   }
-
-
 
   async createProject(data: CreateGitLabProjectType): Promise<GitLabProjectType> {
     this.winstonService.debug(`Creating GitLab project: ${data.name}`);
@@ -42,6 +52,76 @@ export class GitLabService {
     } catch (error) {
       this.winstonService.error(`Failed to create GitLab project: ${error}`);
       throw new InternalServerErrorException("Failed to create GitLab project");
+    }
+  }
+
+  async setProjectVariables(projectId: number, variables: ProjectVariable[]): Promise<void> {
+    this.winstonService.debug(`Setting CI/CD variables for project ${projectId}`);
+
+    try {
+      for (const variable of variables) {
+        try {
+          const existing = await firstValueFrom(
+            this.httpService.get(
+              `${this.url}/api/v4/projects/${projectId}/variables/${encodeURIComponent(variable.key)}`,
+              { headers: this.getHeaders() }
+            )
+          );
+          
+          await firstValueFrom(
+            this.httpService.put(
+              `${this.url}/api/v4/projects/${projectId}/variables/${encodeURIComponent(variable.key)}`,
+              {
+                value: variable.value,
+                protected: variable.protected ?? false,
+                masked: variable.masked ?? false,
+                raw: variable.raw ?? true,
+              },
+              { headers: this.getHeaders() }
+            )
+          );
+          this.winstonService.debug(`Updated variable: ${variable.key}`);
+        } catch (error: any) {
+          if (error?.response?.status === 404) {
+            await firstValueFrom(
+              this.httpService.post(
+                `${this.url}/api/v4/projects/${projectId}/variables`,
+                {
+                  key: variable.key,
+                  value: variable.value,
+                  protected: variable.protected ?? false,
+                  masked: variable.masked ?? false,
+                  raw: variable.raw ?? true,
+                },
+                { headers: this.getHeaders() }
+              )
+            );
+            this.winstonService.debug(`Created variable: ${variable.key}`);
+          } else {
+            this.winstonService.warn(`Failed to set variable ${variable.key}: ${error?.message}`);
+          }
+        }
+      }
+    } catch (error) {
+      this.winstonService.error(`Failed to set project variables: ${error}`);
+    }
+  }
+
+  async deleteProjectVariable(projectId: number, key: string): Promise<void> {
+    this.winstonService.debug(`Deleting CI/CD variable ${key} from project ${projectId}`);
+
+    try {
+      await firstValueFrom(
+        this.httpService.delete(
+          `${this.url}/api/v4/projects/${projectId}/variables/${encodeURIComponent(key)}`,
+          { headers: this.getHeaders() }
+        )
+      );
+      this.winstonService.debug(`Deleted variable: ${key}`);
+    } catch (error: any) {
+      if (error?.response?.status !== 404) {
+        this.winstonService.warn(`Failed to delete variable ${key}: ${error?.message}`);
+      }
     }
   }
 
