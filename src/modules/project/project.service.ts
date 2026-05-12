@@ -4,10 +4,8 @@ import { randomUUID } from "crypto";
 import { join, dirname } from "path";
 import { rmSync, mkdirSync, existsSync, writeFileSync } from "fs";
 import { WinstonService } from "../../shared/logger/winston.service";
-import { TerminalService } from "../terminal/terminal.service";
 import { GitLabService } from "../gitlab/gitlab.service";
 import { TemplateService } from "../template/template.service";
-import { BackendService } from "../backend/backend.service";
 import { StoreService } from "../store/store.service";
 import type { TempProjectType, CreateTempProjectType, CompileResultType, ContainerLogsType } from "./types";
 
@@ -21,10 +19,8 @@ export class ProjectService {
   constructor(
     private readonly configService: ConfigService,
     private readonly winstonService: WinstonService,
-    private readonly terminalService: TerminalService,
     private readonly gitLabService: GitLabService,
     private readonly templateService: TemplateService,
-    private readonly backendService: BackendService,
     private readonly storeService: StoreService,
   ) {
     this.prefix = this.configService.get<string>("core.compiler.name", "compiler-typescript");
