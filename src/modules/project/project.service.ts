@@ -18,7 +18,6 @@ export class ProjectService {
   private readonly tempDir: string;
   private readonly registry: string;
   private readonly keepTemp: boolean;
-  private readonly backendUrl: string;
   private readonly compilerSecret: string;
 
   constructor(
@@ -32,7 +31,6 @@ export class ProjectService {
     this.tempDir = this.configService.get<string>("core.compiler.tempDir", "./tmp/compiler-projects");
     this.registry = this.configService.get<string>("core.gitlab.registry", "http://localhost:8081");
     this.keepTemp = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
-    this.backendUrl = this.configService.get<string>("backend.baseUrl", "http://localhost:5000");
     this.compilerSecret = this.configService.get<string>("COMPILER_SECRET", "test-compiler-secret");
   }
 
@@ -55,8 +53,7 @@ export class ProjectService {
       gitLabProjectPath = gitLabProject.path;
 
       await this.gitLabService.setProjectVariables(gitLabProjectId, [
-        { key: 'COMPILER_SECRET', value: this.compilerSecret, protected: false, masked: false, raw: true },
-        { key: 'BACKEND_URL', value: this.backendUrl, protected: false, masked: false, raw: true },
+        { key: 'COMPILER_SECRET', value: this.compilerSecret, protected: false, masked: true, raw: true },
       ]);
     }
 
@@ -204,8 +201,7 @@ export class ProjectService {
     });
 
     await this.gitLabService.setProjectVariables(gitLabProjectNew.id, [
-      { key: 'COMPILER_SECRET', value: this.compilerSecret, protected: false, masked: false, raw: true },
-      { key: 'BACKEND_URL', value: this.backendUrl, protected: false, masked: false, raw: true },
+      { key: 'COMPILER_SECRET', value: this.compilerSecret, protected: false, masked: true, raw: true },
     ]);
 
     return {

@@ -1,7 +1,6 @@
 import { registerAs } from '@nestjs/config';
 
 export interface CoreConfig {
-  backendUrl: string,
   compiler: {
     name: string,
     tempDir: string,
@@ -12,13 +11,13 @@ export interface CoreConfig {
     url: string,
     registry: string,
     token: string,
+    backend: string
   }
 }
 
 export default registerAs(
   'core',
   (): CoreConfig => ({
-    backendUrl: process.env.BACKEND_URL || 'http://localhost:5000',
     compiler: {
       name: process.env.COMPILER_NAME || 'compiler-typescript',
       tempDir: process.env.COMPILER_TEMP_DIR || './tmp/compiler-projects',
@@ -29,6 +28,7 @@ export default registerAs(
       url: process.env.GITLAB_URL || 'http://localhost:8080',
       registry: process.env.GITLAB_REGISTRY_URL || 'http://localhost:8081',
       token: process.env.GITLAB_TOKEN || '',
+      backend: process.env.GITLAB_CI_BACKEND_URL || 'http://host.docker.internal:5000'
     }
   }),
 );

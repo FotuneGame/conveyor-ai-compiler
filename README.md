@@ -100,8 +100,6 @@ LOG_MAX_SIZE=5242880
 LOG_MAX_FILES=5
 LOG_MAX_DAYS=30
 
-BACKEND_URL=http://localhost:5000
-
 SWAGGER_TITLE="API Documentation"
 SWAGGER_DESCRIPTION="API для работы курсовой"
 SWAGGER_VERSION=1.0
@@ -117,6 +115,8 @@ COMPILER_SECRET=test-compiler-secret
 
 GITLAB_URL=http://localhost:8080
 GITLAB_TOKEN=your-gitlab-token-here
+GITLAB_REGISTRY_URL=http://localhost:5081
+GITLAB_CI_BACKEND_URL=http://host.docker.internal:5000
 
 KEEP_TEMP_FILES=false
 COMPILER_TEMP_DIR=./tmp/compiler-projects

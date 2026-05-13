@@ -18,8 +18,6 @@ export type ProjectVariable = {
 export class GitLabService {
   private readonly url: string;
   private readonly token: string;
-  private readonly backendUrl: string;
-  private readonly compilerSecret: string;
 
   constructor(
     private readonly httpService: HttpService,
@@ -29,8 +27,6 @@ export class GitLabService {
   ) {
     this.url = this.configService.get<string>("core.gitlab.url", "http://localhost:8080");
     this.token = this.configService.get<string>("core.gitlab.token", "");
-    this.backendUrl = this.configService.get<string>("backend.baseUrl", "http://localhost:5000");
-    this.compilerSecret = this.configService.get<string>("COMPILER_SECRET", "test-compiler-secret");
   }
 
   async createProject(data: CreateGitLabProjectType): Promise<GitLabProjectType> {
