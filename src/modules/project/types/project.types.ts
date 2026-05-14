@@ -12,8 +12,6 @@ export type ProjectType = {
   path: string;
   graphId: number;
   modelId: number;
-  containerName: string;
-  imageName: string;
   createdAt: Date;
   gitlab?: {
     project?: GitLabProjectRefType;

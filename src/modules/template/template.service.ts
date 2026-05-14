@@ -3,8 +3,9 @@ import { ConfigService } from "@nestjs/config";
 import { WinstonService } from "src/shared/logger/winston.service";
 import type { GeneratedFileType } from "./types";
 import type { CompileRequestType } from "../compiler/types";
-
-
+import { ParserService } from "../parser/parser.service";
+import { GraphTraversalService } from "../graph-traversal/graph-traversal.service";
+import { CodegenService } from "../codegen/codegen.service";
 
 @Injectable()
 export class TemplateService {
@@ -14,7 +15,10 @@ export class TemplateService {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly winstonService: WinstonService
+    private readonly winstonService: WinstonService,
+    private readonly parserService: ParserService,
+    private readonly graphTraversalService: GraphTraversalService,
+    private readonly codegenService: CodegenService,
   ) {
     this.prefix = this.configService.get<string>("core.compiler.name", "compiler-typescript");
     this.registry = this.configService.get<string>("core.gitlab.registry", "http://localhost:8081");
@@ -23,6 +27,15 @@ export class TemplateService {
 
   generateFiles(context: CompileRequestType): GeneratedFileType[] {
     this.winstonService.debug(`Generating files for model ${context.model.id}/graph ${context.graph.id}`);
+
+    const parseResult = this.parserService.parse(context);
+    if (!parseResult.success) {
+      const errorMessage = parseResult.errors.map((e) => e.message).join("; ");
+      throw new Error(`Graph validation failed: ${errorMessage}`);
+    }
+
+    const graph = this.graphTraversalService.buildGraph(parseResult.nodes);
+    const codegen = this.codegenService.generate(context, graph);
 
     return [
       { path: ".env", content: this.generateEnv(context) },
@@ -33,7 +46,10 @@ export class TemplateService {
       { path: "package.json", content: this.generatePackageJson(context) },
       { path: "tsconfig.json", content: this.generateTsConfig() },
       { path: "src/index.ts", content: this.generateMainFile(context) },
-      { path: "src/app.ts", content: this.generateAppFile(context) },
+      { path: "src/app.ts", content: codegen.app },
+      { path: "src/engine/graph-engine.ts", content: codegen.engine.content },
+      { path: "src/types/generated.ts", content: codegen.types },
+      ...codegen.nodes.map((n) => ({ path: n.fileName, content: n.content })),
     ];
   }
 
@@ -49,7 +65,7 @@ export class TemplateService {
 
   private generateEnv(ctx: CompileRequestType): string {
     const { model, graph } = ctx;
-    const baseEnv = {
+    const baseEnv: Record<string, string> = {
       NODE_ENV: "production",
       PORT: "3000",
       GRAPH_ID: String(graph.id),
@@ -57,8 +73,12 @@ export class TemplateService {
       MODEL_NAME: model.name,
       MODEL_TAG: model.tag,
     };
-    const customEnv = (graph as any).customEnv ?? (graph as any).env;
-    const mergedEnv = { ...baseEnv, ...customEnv };
+    const mergedEnv: Record<string, string> = { ...baseEnv };
+    if (ctx.customEnv) {
+      for (const [key, value] of Object.entries(ctx.customEnv)) {
+        mergedEnv[key] = String(value);
+      }
+    }
     return Object.entries(mergedEnv).map(([k, v]) => `${k}=${v}`).join("\n");
   }
 
@@ -95,7 +115,7 @@ export class TemplateService {
     const imageName = `${registryHost}/${projectPath}`;
 
     const tagName = model.tag.toLowerCase().replace(/[^a-z0-9]/g, "-");
-    const containerName = `${this.prefix}-container-${model.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${model.id}-${graph.id}`;
+    const containerName = `${this.prefix}-container-${model.id}-${graph.id}`;
     const port = customEnv?.PORT ?? "3000";
     const backendUrl = this.backend.replace(/\/$/, '');
 
@@ -114,6 +134,7 @@ export class TemplateService {
       `  DOCKER_TAG: "${tagName}"`,
       `  CONTAINER_NAME: "${containerName}"`,
       `  MODEL_ID: "${model.id}"`,
+      `  GRAPH_ID: "${graph.id}"`,
       `  EXTERNAL_PORT: "${port}"`,
       `  BACKEND: "${backendUrl}"`,
       "  DOCKER_DRIVER: overlay2",
@@ -289,64 +310,6 @@ export class TemplateService {
       "  console.log('Model ID: ' + process.env.MODEL_ID);",
       "  console.log('Graph ID: ' + process.env.GRAPH_ID);",
       "});",
-    ].join("\n");
-  }
-
-  private generateAppFile(ctx: CompileRequestType): string {
-    const { nodes } = ctx;
-    const nodesInfo = nodes.map(n => `    // Node: ${n.name} (${n.type.name})`).join("\n");
-
-    return [
-      "import express, { Request, Response } from 'express';",
-      "import cors from 'cors';",
-      "",
-      "export class App {",
-      "  private app: express.Application;",
-      "",
-      "  constructor() {",
-      "    this.app = express();",
-      "    this.initializeMiddleware();",
-      "    this.initializeRoutes();",
-      "  }",
-      "",
-      "  private initializeMiddleware(): void {",
-      "    this.app.use(cors());",
-      "    this.app.use(express.json());",
-      "  }",
-      "",
-      "  private initializeRoutes(): void {",
-      "    this.app.get('/health', (req: Request, res: Response) => {",
-      "      res.json({ status: 'ok', timestamp: new Date().toISOString() });",
-      "    });",
-      "",
-      "    this.app.get('/graph', (req: Request, res: Response) => {",
-      "      res.json({",
-      "        graphId: process.env.GRAPH_ID,",
-      "        modelId: process.env.MODEL_ID,",
-      "        modelName: process.env.MODEL_NAME,",
-      "      });",
-      "    });",
-      "",
-      nodesInfo,
-      "",
-      "    this.app.use((req: Request, res: Response) => {",
-      "      res.status(404).json({ error: 'Not found' });",
-      "    });",
-      "  }",
-      "",
-      "  async start(port: number): Promise<void> {",
-      "    return new Promise((resolve) => {",
-      "      this.app.listen(port, () => resolve());",
-      "    });",
-      "  }",
-      "",
-      "  async stop(): Promise<void> {",
-      "    return new Promise((resolve) => {",
-      "      // @ts-expect-error express app.close exists in @types/express",
-      "      this.app.close(() => resolve());",
-      "    });",
-      "  }",
-      "}",
     ].join("\n");
   }
 }

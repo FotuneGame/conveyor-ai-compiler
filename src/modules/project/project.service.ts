@@ -16,7 +16,6 @@ import type { CompileRequestType, CompileResultType, ContainerLogsType } from ".
 export class ProjectService {
   private readonly prefix: string;
   private readonly tempDir: string;
-  private readonly registry: string;
   private readonly keepTemp: boolean;
   private readonly compilerSecret: string;
 
@@ -29,7 +28,6 @@ export class ProjectService {
   ) {
     this.prefix = this.configService.get<string>("core.compiler.name", "compiler-typescript");
     this.tempDir = this.configService.get<string>("core.compiler.tempDir", "./tmp/compiler-projects");
-    this.registry = this.configService.get<string>("core.gitlab.registry", "http://localhost:8081");
     this.keepTemp = this.configService.get<boolean>("core.compiler.keepTempFiles", false);
     this.compilerSecret = this.configService.get<string>("COMPILER_SECRET", "test-compiler-secret");
   }
@@ -76,8 +74,6 @@ export class ProjectService {
       path,
       graphId: data.graph.id,
       modelId: data.model.id,
-      containerName: `${this.prefix}-${id}`,
-      imageName: `${this.prefix}-${id}:latest`,
       createdAt: new Date(),
       gitlab: {
         project: {
@@ -114,8 +110,6 @@ export class ProjectService {
         success: true,
         projectId: project.id,
         projectPath: project.path,
-        containerName: project.containerName,
-        imageName: `${this.registry}/${gitLabProjectPath}`,
         gitlab: {
           projectId: gitLabProjectId,
           pipelineId: pipeline.id,
@@ -182,8 +176,6 @@ export class ProjectService {
         path: "",
         graphId: modelId,
         modelId,
-        containerName: `${this.prefix}-${modelId}-${graphId}`,
-        imageName: `${this.prefix}-${modelId}-${graphId}:latest`,
         createdAt: new Date(),
         gitlab: {
           project: {
@@ -209,8 +201,6 @@ export class ProjectService {
       path: "",
       graphId: modelId,
       modelId,
-      containerName: `${this.prefix}-${modelId}-${graphId}`,
-      imageName: `${this.prefix}-${modelId}-${graphId}:latest`,
       createdAt: new Date(),
       gitlab: {
         project: {
@@ -251,8 +241,6 @@ export class ProjectService {
       success: false,
       projectId,
       projectPath: p?.path ?? "",
-      containerName: p?.containerName ?? "",
-      imageName: p?.imageName ?? "",
       error,
     };
   }

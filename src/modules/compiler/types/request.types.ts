@@ -27,8 +27,6 @@ export type CompileResultType = {
   success: boolean;
   projectId: string;
   projectPath: string;
-  containerName: string;
-  imageName: string;
   gitlab?: {
     projectId?: number;
     pipelineId?: number;

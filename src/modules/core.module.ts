@@ -5,6 +5,9 @@ import { GitLabModule } from './gitlab';
 import { ProjectModule } from './project';
 import { TemplateModule } from './template';
 import { TerminalModule } from './terminal';
+import { ParserModule } from './parser/parser.module';
+import { GraphTraversalModule } from './graph-traversal/graph-traversal.module';
+import { CodegenModule } from './codegen/codegen.module';
 
 @Module({
   imports: [
@@ -14,6 +17,9 @@ import { TerminalModule } from './terminal';
     ProjectModule,
     TemplateModule,
     TerminalModule,
+    ParserModule,
+    GraphTraversalModule,
+    CodegenModule,
   ],
 })
 export class CoreModule {}
