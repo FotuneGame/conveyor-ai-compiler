@@ -10,6 +10,7 @@ import type {
   CircleType,
 } from './node-types.types';
 import type { DataType } from './data-type.types';
+import { LineType } from './line.types';
 
 export type NodeTypeType = {
   id: number;
@@ -26,6 +27,8 @@ export type NodeType = {
   updatedAt: Date;
   enterDataType: DataType;
   exitDataType: DataType;
+  childLines: LineType[];
+  parentLines: LineType[];
   type: NodeTypeType;
   condition?: ConditionType | null;
   memory?: MemoryType | null;

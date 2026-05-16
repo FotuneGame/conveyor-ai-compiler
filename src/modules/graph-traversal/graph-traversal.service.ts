@@ -8,16 +8,20 @@ export class GraphTraversalService {
     const map = new Map<number, GraphNodeType>();
 
     for (const node of nodes) {
+      // Backend semantics:
+      // parentLines = outgoing edges (this node is parent -> line.child)
+      // childLines  = incoming edges (this node is child  -> line.parent)
       map.set(node.id, {
         id: node.id,
         node,
-        children: (node.childLines || []).map((l) => l.child.id),
-        parents: (node.parentLines || []).map((l) => l.parent.id),
+        children: (node.parentLines || []).map((l) => l.child.id),
+        parents: (node.childLines || []).map((l) => l.parent.id),
         depth: 0,
       });
     }
 
-    const startNode = nodes.find((n) => !n.parentLines || n.parentLines.length === 0);
+    // Start node has no incoming edges (no childLines)
+    const startNode = nodes.find((n) => !n.childLines || n.childLines.length === 0);
     const startNodeId = startNode?.id ?? nodes[0]?.id ?? 0;
 
     const queue: Array<{ id: number; depth: number }> = [{ id: startNodeId, depth: 0 }];

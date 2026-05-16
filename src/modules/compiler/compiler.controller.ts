@@ -44,16 +44,9 @@ export class CompilerController {
   async stop(@Body() data: StopRequestType): Promise<{ success: boolean; message: string }> {
     const { model, graph } = data;
 
-    const stopped = await this.projectService.stopProject(model.id, graph.id);
+    const result = await this.projectService.stopProject(model.id, graph.id);
 
-    if (!stopped) {
-      throw new HttpException(
-        { message: "Failed to stop project", modelId: model.id, graphId: graph.id },
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-
-    return { success: true, message: "Container stop pipeline triggered via GitLab CI/CD" };
+    return { success: result.success, message: result.message };
   }
 
   @Get("models/:modelId/graphs/:graphId/logs")

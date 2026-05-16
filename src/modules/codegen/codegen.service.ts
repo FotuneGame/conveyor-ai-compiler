@@ -11,6 +11,8 @@ import type {
   MemoryType,
   CallType,
   DataType,
+  HTTPType,
+  WSType,
 } from '../compiler/types';
 import type { NodeWithLinesType } from '../parser/types';
 import type { GraphType } from '../graph-traversal/types';
@@ -28,45 +30,67 @@ export class CodegenService {
 
     const engine = this.generateEngine(graph);
     const types = this.generateTypes(context.dataTypes);
-    const app = this.generateApp(graph, context.model.name);
+    const app = this.generateApp(graph, context.model.name, nodes);
 
     return { nodes: nodeFiles, engine, types, app };
+  }
+
+  private isSelfManaged(node: NodeWithLinesType): boolean {
+    if (node.circle) return true;
+    if (node.timer) return true;
+    if (node.interval) return true;
+    if (node.api?.protocol?.ws) return true;
+    return false;
+  }
+
+  private getChildIds(node: NodeWithLinesType): number[] {
+    // parentLines = outgoing edges (this node is parent)
+    return node.parentLines?.map((l) => l.child.id) ?? [];
+  }
+
+  private generateChildImports(node: NodeWithLinesType): string {
+    const childIds = this.getChildIds(node);
+    if (childIds.length === 0) return '';
+    return childIds.map((id) => `import { node_${id} } from './node_${id}';`).join('\n');
+  }
+
+  private generateRunChildrenHelper(node: NodeWithLinesType): string {
+    const childIds = this.getChildIds(node);
+    if (childIds.length === 0) {
+      return `const runChildren = async (data: unknown): Promise<unknown> => data;`;
+    }
+    return [
+      `const runChildren = async (data: unknown): Promise<unknown> => {`,
+      `  let result = data;`,
+      ...childIds.map((id) => `  result = await node_${id}(result, env);`),
+      `  return result;`,
+      `};`,
+    ].join('\n');
   }
 
   private generateNode(node: NodeWithLinesType): GeneratedNodeType {
     const enterType = this.sanitizeTypeName(node.enterDataType?.name || 'unknown');
     const exitType = this.sanitizeTypeName(node.exitDataType?.name || 'unknown');
-    let body = '';
+    const isSelfManaged = this.isSelfManaged(node);
+    const childImports = isSelfManaged ? this.generateChildImports(node) : '';
+    const runChildren = isSelfManaged ? this.generateRunChildrenHelper(node) : '';
 
-    if (node.function) {
-      body = this.generateFunctionNode(node.function);
-    } else if (node.api) {
-      body = this.generateApiNode(node.api);
-    } else if (node.llm) {
-      body = this.generateLlmNode(node.llm);
-    } else if (node.condition) {
-      body = this.generateConditionNode(node.condition);
-    } else if (node.circle) {
-      body = this.generateCircleNode(node.circle);
-    } else if (node.timer) {
-      body = this.generateTimerNode(node.timer);
-    } else if (node.interval) {
-      body = this.generateIntervalNode(node.interval);
-    } else if (node.memory) {
-      body = this.generateMemoryNode(node.memory);
-    } else if (node.call) {
-      body = this.generateCallNode(node.call);
-    } else {
-      body = `return input as ${exitType};`;
-    }
+    const body = this.generateNodeBody(node, enterType, exitType, isSelfManaged);
 
     const typeImports = enterType === exitType ? enterType : `${enterType}, ${exitType}`;
+    const memoryImports = node.memory
+      ? `import { readFileSync, writeFileSync, existsSync } from 'fs';\nimport { join } from 'path';\n`
+      : '';
+
     const content = [
+      memoryImports,
       `import type { ${typeImports} } from '../types/generated';`,
+      childImports,
       ``,
-      `export async function node_${node.id}(input: ${enterType}, env: Record<string, unknown>): Promise<${exitType}> {`,
+      `export const node_${node.id} = async (input: ${enterType}, env: Record<string, unknown>): Promise<${exitType}> => {`,
+      runChildren ? `  ${runChildren}\n` : '',
       `  ${body}`,
-      `}`,
+      `};`,
     ].join('\n');
 
     return {
@@ -77,91 +101,213 @@ export class CodegenService {
     };
   }
 
-  private generateFunctionNode(fn: FunctionType): string {
-    const args = fn.args ? fn.args.split(',').map((a) => a.trim()).filter(Boolean) : [];
-    const argsStr = args.length > 0 ? `const [${args.join(', ')}] = input as unknown[];` : '';
-    return [
-      argsStr,
-      `const fn = ${fn.body};`,
-      `return fn(${args.join(', ')}) as unknown;`,
-    ]
-      .filter(Boolean)
-      .join('\n  ');
+  private generateNodeBody(node: NodeWithLinesType, enterType: string, exitType: string, isSelfManaged: boolean): string {
+    if (node.function) {
+      return this.generateFunctionNode(node.function, exitType);
+    }
+    if (node.api) {
+      return this.generateApiNode(node.api, exitType, isSelfManaged);
+    }
+    if (node.llm) {
+      return this.generateLlmNode(node.llm, exitType);
+    }
+    if (node.condition) {
+      return this.generateConditionNode(node.condition);
+    }
+    if (node.circle) {
+      return this.generateCircleNode(node.circle, exitType);
+    }
+    if (node.timer) {
+      return this.generateTimerNode(node.timer, exitType);
+    }
+    if (node.interval) {
+      return this.generateIntervalNode(node.interval, exitType);
+    }
+    if (node.memory) {
+      return this.generateMemoryNode(node.memory, exitType, node.id);
+    }
+    if (node.call) {
+      return this.generateCallNode(node.call, exitType);
+    }
+    return `return input as ${exitType};`;
   }
 
-  private generateApiNode(api: APIType): string {
-    const protocol = api.protocol;
-    if (protocol.http) {
-      const headers = protocol.http.headers || '{}';
+  private ensureReturn(code: string): string {
+    const trimmed = code.trim();
+    if (/^\s*return\s+/m.test(trimmed)) {
+      return trimmed;
+    }
+    return `return ${trimmed};`;
+  }
+
+  private generateFunctionNode(fn: FunctionType, exitType: string): string {
+    const argsCode = fn.args || '';
+    const bodyCode = this.ensureReturn(fn.body || `return input as ${exitType};`);
+
+    if (argsCode.trim()) {
       return [
-        `const response = await fetch('${protocol.http.url}', {`,
-        `  method: '${protocol.http.method}',`,
-        `  headers: ${headers},`,
-        `  body: ${protocol.http.body ? `JSON.stringify(${protocol.http.body})` : 'undefined'},`,
-        `});`,
-        `return await response.json() as unknown;`,
+        `const { ${argsCode} } = input as unknown;`,
+        bodyCode,
       ].join('\n  ');
     }
-    return `return input as unknown;`;
+    return bodyCode;
   }
 
-  private generateLlmNode(llm: LLMType): string {
-    const url = llm.protocol.http?.url || '';
+  private generateApiNode(api: APIType, exitType: string, isSelfManaged: boolean): string {
+    const protocol = api.protocol;
+    if (protocol.http) {
+      return this.generateHttpNode(protocol.http, exitType);
+    }
+    if (protocol.ws) {
+      return this.generateWsNode(protocol.ws, exitType, isSelfManaged);
+    }
+    return `return input as ${exitType};`;
+  }
+
+  private generateHttpNode(http: HTTPType, exitType: string): string {
+    let url = http.url;
+    if (http.secure && url.startsWith('http://')) {
+      url = url.replace('http://', 'https://');
+    }
+    const headersCode = http.headers || "{ 'Content-Type': 'application/json' }";
+    const bodyCode = http.body || 'undefined';
+    const paramsCode = http.params || '{}';
+
+    return [
+      `const url = new URL('${url}');`,
+      `const params = ${paramsCode};`,
+      `Object.entries(params).forEach(([k, v]) => url.searchParams.append(k, String(v)));`,
+      `const response = await fetch(url.toString(), {`,
+      `  method: '${http.method}',`,
+      `  headers: ${headersCode},`,
+      `  body: ${bodyCode} !== undefined ? JSON.stringify(${bodyCode}) : undefined,`,
+      `});`,
+      `if (!response.ok) {`,
+      `  throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);`,
+      `}`,
+      `return await response.json() as ${exitType};`,
+    ].join('\n  ');
+  }
+
+  private generateWsNode(ws: WSType, exitType: string, isSelfManaged: boolean): string {
+    let url = ws.url;
+    if (ws.secure && url.startsWith('ws://')) {
+      url = url.replace('ws://', 'wss://');
+    }
+    if (!isSelfManaged) {
+      return `return input as ${exitType};`;
+    }
+    return [
+      `const { io } = await import('socket.io-client');`,
+      `const query = ${ws.query || '{}'};`,
+      `const auth = ${ws.auth || '{}'};`,
+      `const client = io('${url}', { query, auth, transports: ['websocket', 'polling'] });`,
+      `const result = await new Promise((resolve, reject) => {`,
+      `  client.once('${ws.event || 'message'}', async (data) => {`,
+      `    try {`,
+      `      const childResult = await runChildren(data);`,
+      `      resolve(childResult);`,
+      `    } catch (e) { reject(e); }`,
+      `  });`,
+      `  client.once('connect_error', reject);`,
+      `  setTimeout(() => reject(new Error('WS timeout')), 30000);`,
+      `});`,
+      `client.disconnect();`,
+      `return result as ${exitType};`,
+    ].join('\n  ');
+  }
+
+  private generateLlmNode(llm: LLMType, exitType: string): string {
+    const http = llm.protocol.http;
+    let url = http?.url || '';
+    if (http?.secure && url.startsWith('http://')) {
+      url = url.replace('http://', 'https://');
+    }
+    const method = http?.method || 'POST';
+    const headers = http?.headers || "{ 'Content-Type': 'application/json' }";
+    const body = http?.body || `JSON.stringify({ prompt: ${JSON.stringify(llm.prompt)}, temperature: ${llm.temperature}, context: ${JSON.stringify(llm.context)}, max_tokens: ${llm.size} })`;
+
     return [
       `const response = await fetch('${url}', {`,
-      `  method: 'POST',`,
-      `  headers: { 'Content-Type': 'application/json' },`,
-      `  body: JSON.stringify({ prompt: ${JSON.stringify(llm.prompt)}, temperature: ${llm.temperature}, context: ${JSON.stringify(llm.context)} }),`,
+      `  method: '${method}',`,
+      `  headers: ${headers},`,
+      `  body: ${body},`,
       `});`,
-      `return await response.json() as unknown;`,
+      `if (!response.ok) {`,
+      `  throw new Error(\`LLM request failed: \${response.status}\`);`,
+      `}`,
+      `return await response.json() as ${exitType};`,
     ].join('\n  ');
   }
 
   private generateConditionNode(condition: ConditionType): string {
-    return [
-      `const condition = Boolean(${condition.expression});`,
-      `return { condition, data: input } as unknown;`,
-    ].join('\n  ');
+    return this.ensureReturn(condition.expression || 'return true;');
   }
 
-  private generateCircleNode(circle: CircleType): string {
+  private generateCircleNode(circle: CircleType, exitType: string): string {
     return [
       `let step = 0;`,
-      `while (step < ${circle.maxStep ?? 1000} && (${circle.expression})) {`,
+      `let lastResult = input as ${exitType};`,
+      `while (step < ${circle.maxStep ?? 1000}) {`,
+      `  const shouldContinue = await (async () => { ${circle.expression || 'return false;'} })();`,
+      `  if (!shouldContinue) break;`,
+      `  lastResult = await runChildren(lastResult);`,
       `  step++;`,
       `}`,
-      `return input as unknown;`,
+      `return lastResult;`,
     ].join('\n  ');
   }
 
-  private generateTimerNode(timer: TimerType): string {
+  private generateTimerNode(timer: TimerType, exitType: string): string {
     return [
-      `const delay = new Date('${timer.end.toISOString()}').getTime() - Date.now();`,
-      `await new Promise((r) => setTimeout(r, Math.max(delay, 0)));`,
-      `return input as unknown;`,
+      `const startTime = new Date('${timer.start.toISOString()}').getTime();`,
+      `const endTime = new Date('${timer.end.toISOString()}').getTime();`,
+      `const now = Date.now();`,
+      `if (now < startTime) {`,
+      `  await new Promise(r => setTimeout(r, startTime - now));`,
+      `}`,
+      `if (now < endTime) {`,
+      `  await new Promise(r => setTimeout(r, endTime - now));`,
+      `}`,
+      `return await runChildren(input as ${exitType});`,
     ].join('\n  ');
   }
 
-  private generateIntervalNode(interval: IntervalType): string {
+  private generateIntervalNode(interval: IntervalType, exitType: string): string {
     return [
-      `await new Promise((r) => setTimeout(r, ${interval.milliseconds}));`,
-      `return input as unknown;`,
+      `const startTime = new Date('${interval.start.toISOString()}').getTime();`,
+      `const now = Date.now();`,
+      `if (now < startTime) {`,
+      `  await new Promise(r => setTimeout(r, startTime - now));`,
+      `}`,
+      `await new Promise(r => setTimeout(r, ${interval.milliseconds}));`,
+      `return await runChildren(input as ${exitType});`,
     ].join('\n  ');
   }
 
-  private generateMemoryNode(memory: MemoryType): string {
+  private generateMemoryNode(memory: MemoryType, exitType: string, nodeId: number): string {
     return [
-      `const store = (env.__memory as Map<string, unknown>) || new Map();`,
-      `store.set('node_${memory.id}', input);`,
-      `env.__memory = store;`,
-      `return input as unknown;`,
+      `const filePath = join(process.cwd(), 'memory-node-${nodeId}.json');`,
+      `let arr: unknown[] = [];`,
+      `if (existsSync(filePath)) {`,
+      `  arr = JSON.parse(readFileSync(filePath, 'utf-8'));`,
+      `}`,
+      `arr.push(input);`,
+      `if (${memory.maxSize ?? 'null'} && arr.length > ${memory.maxSize ?? 0}) {`,
+      `  arr.shift();`,
+      `}`,
+      `writeFileSync(filePath, JSON.stringify(arr, null, 2));`,
+      `return arr as ${exitType};`,
     ].join('\n  ');
   }
 
-  private generateCallNode(call: CallType): string {
+  private generateCallNode(call: CallType, exitType: string): string {
     return [
-      `// Call ${call.name}(${call.args})`,
-      `return input as unknown;`,
+      `const fn = (env.__functions as Map<string, Function>)?.get('${call.name}');`,
+      `if (typeof fn === 'function') {`,
+      `  return await fn(${call.args || 'input'}, env);`,
+      `}`,
+      `return input as ${exitType};`,
     ].join('\n  ');
   }
 
@@ -171,7 +317,11 @@ export class CodegenService {
       .join('\n');
 
     const nodeMapEntries = Array.from(graph.nodes.values())
-      .map((n) => `  [${n.id}, { id: ${n.id}, fn: node_${n.id}, children: [${n.children.join(', ')}] }]`)
+      .map((n) => {
+        const isSelf = this.isSelfManaged(n.node);
+        const kind = this.sanitizeIdentifier(n.node.type?.name ?? 'default');
+        return `  [${n.id}, { id: ${n.id}, kind: '${kind}', fn: node_${n.id}, children: [${isSelf ? '' : n.children.join(', ')}] }]`;
+      })
       .join(',\n');
 
     const content = [
@@ -179,6 +329,7 @@ export class CodegenService {
       '',
       'type NodeDef = {',
       '  id: number;',
+      "  kind: 'function' | 'api' | 'llm' | 'condition' | 'memory' | 'call' | 'circle' | 'timer' | 'interval' | string;",
       '  fn: (input: unknown, env: Record<string, unknown>) => Promise<unknown>;',
       '  children: number[];',
       '};',
@@ -192,9 +343,13 @@ export class CodegenService {
       '    ]);',
       '  }',
       '',
-      '  async run(startNodeId: number, initialInput: unknown, env: Record<string, unknown>): Promise<unknown> {',
+      '  getNodes(): Map<number, NodeDef> {',
+      '    return this.nodes;',
+      '  }',
+      '',
+      '  async run(startNodeId: number, initialInput: unknown, env: Record<string, unknown>): Promise<Record<number, unknown>> {',
       '    const queue: Array<{ nodeId: number; input: unknown }> = [{ nodeId: startNodeId, input: initialInput }];',
-      '    let lastResult: unknown = initialInput;',
+      '    const outputs = new Map<number, unknown>();',
       '',
       '    while (queue.length > 0) {',
       '      const current = queue.shift()!;',
@@ -202,14 +357,19 @@ export class CodegenService {
       '      if (!node) continue;',
       '',
       '      const result = await node.fn(current.input, env);',
-      '      lastResult = result;',
+      '      outputs.set(current.nodeId, result);',
+      '',
+      '      // Condition node stops the branch if result is falsy',
+      '      if (node.kind === "condition" && !result) {',
+      '        continue;',
+      '      }',
       '',
       '      for (const childId of node.children) {',
       '        queue.push({ nodeId: childId, input: result });',
       '      }',
       '    }',
       '',
-      '    return lastResult;',
+      '    return Object.fromEntries(outputs);',
       '  }',
       '}',
     ].join('\n');
@@ -224,28 +384,39 @@ export class CodegenService {
     const types = dataTypes
       .map((dt) => {
         const name = this.sanitizeTypeName(dt.name);
-        return `export type ${name} = unknown;`;
+        const value = dt.value || 'unknown';
+        return `export type ${name} = ${value};`;
       })
       .join('\n');
 
     return types || `export type UnknownType = unknown;`;
   }
 
-  generateApp(graph: GraphType, modelName: string): string {
+  generateApp(graph: GraphType, modelName: string, nodes: Array<NodeWithLinesType>): string {
     const startNodeId = graph.startNodeId;
+
+    const functionMapEntries = nodes
+      .filter((n) => n.function && n.function.name)
+      .map((n) => `  ['${n.function!.name}', node_${n.id}]`)
+      .join(',\n');
 
     return [
       `import express, { Request, Response } from 'express';`,
       `import cors from 'cors';`,
       `import { GraphEngine } from './engine/graph-engine';`,
+      nodes.filter((n) => n.function && n.function.name).map((n) => `import { node_${n.id} } from './nodes/node_${n.id}';`).join('\n'),
       ``,
       `export class App {`,
       `  private app: express.Application;`,
       `  private engine: GraphEngine;`,
+      `  private functionMap: Map<string, Function>;`,
       ``,
       `  constructor() {`,
       `    this.app = express();`,
       `    this.engine = new GraphEngine();`,
+      `    this.functionMap = new Map([`,
+      functionMapEntries,
+      `    ]);`,
       `    this.initializeMiddleware();`,
       `    this.initializeRoutes();`,
       `  }`,
@@ -264,10 +435,20 @@ export class CodegenService {
       `      res.json({ logs: [], model: '${modelName}', graphId: process.env.GRAPH_ID });`,
       `    });`,
       ``,
+      `    this.app.get('/api/nodes', (req: Request, res: Response) => {`,
+      `      const nodeList = Array.from(this.engine.getNodes().values()).map((n) => ({`,
+      `        id: n.id,`,
+      `        kind: n.kind,`,
+      `        children: n.children,`,
+      `      }));`,
+      `      res.json({ nodes: nodeList, graphId: process.env.GRAPH_ID });`,
+      `    });`,
+      ``,
       `    this.app.post('/api/run', async (req: Request, res: Response) => {`,
       `      try {`,
-      `        const result = await this.engine.run(${startNodeId}, req.body, process.env as Record<string, unknown>);`,
-      `        res.json({ result });`,
+      `        const env = { ...process.env, __functions: this.functionMap, __memory: new Map() };`,
+      `        const results = await this.engine.run(${startNodeId}, req.body, env);`,
+      `        res.json({ results, startNodeId: ${startNodeId} });`,
       `      } catch (err) {`,
       `        res.status(500).json({ error: String(err) });`,
       `      }`,
@@ -300,5 +481,10 @@ export class CodegenService {
   private sanitizeTypeName(name: string | undefined): string {
     if (!name) return 'unknown';
     return name.replace(/[^a-zA-Z0-9_]/g, '_');
+  }
+
+  private sanitizeIdentifier(name: string | undefined): string {
+    if (!name) return 'default';
+    return name.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
   }
 }

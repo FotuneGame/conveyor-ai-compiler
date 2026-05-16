@@ -262,6 +262,8 @@ export class TemplateService {
         express: "^4.21.0",
         cors: "^2.8.5",
         dotenv: "^16.4.5",
+        ws: "^8.18.0",
+        "socket.io-client": "^4.8.1",
       },
       devDependencies: {
         "@types/cors": "^2.8.17",

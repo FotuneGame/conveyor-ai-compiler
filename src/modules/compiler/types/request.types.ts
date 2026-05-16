@@ -9,6 +9,11 @@ export type StopRequestType = {
   graph: GraphType,
 }
 
+export type StopResultType = {
+  success: boolean;
+  message: string;
+};
+
 export type CompileRequestType = {
   model: ModelType;
   graph: GraphType;

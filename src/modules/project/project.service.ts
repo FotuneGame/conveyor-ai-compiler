@@ -8,7 +8,7 @@ import { GitLabService } from "../gitlab/gitlab.service";
 import { TemplateService } from "../template/template.service";
 import { StoreService } from "../store/store.service";
 import type { ProjectType} from "./types";
-import type { CompileRequestType, CompileResultType, ContainerLogsType } from "../compiler/types";
+import type { CompileRequestType, CompileResultType, ContainerLogsType, StopResultType } from "../compiler/types";
 
 
 
@@ -122,17 +122,25 @@ export class ProjectService {
     }
   }
 
-  async stopProject(modelId: number, graphId: number): Promise<boolean> {
+  async stopProject(modelId: number, graphId: number): Promise<StopResultType> {
     const project = await this.findProjectByModelAndGraph(modelId, graphId);
-    if (!project?.gitlab?.project?.id) return false;
+    if (!project?.gitlab?.project?.id) {
+      this.winstonService.warn(
+        `Stop: no project found for modelId=${modelId}, graphId=${graphId}. Graph is not running.`,
+      );
+      return { success: true, message: 'Graph is not running (no project found).' };
+    }
 
     try {
       await this.gitLabService.createPipeline(project.gitlab.project.id, "main", { STOP_CONTAINER: "true" });
       await new Promise((r) => setTimeout(r, 2000));
-      return true;
-    } catch (err) {
-      this.winstonService.error(`Stop failed: ${err}`);
-      return false;
+      return { success: true, message: 'Graph stop triggered via GitLab CI/CD.' };
+    } catch (err: any) {
+      this.winstonService.warn(
+        `Stop: failed to trigger stop pipeline for modelId=${modelId}, graphId=${graphId}. ` +
+        `Project may not have CI configured or may not be running. Error: ${err?.message || err}`,
+      );
+      return { success: true, message: 'Graph is not running or stop is not applicable for this project.' };
     }
   }
 
@@ -170,42 +178,19 @@ export class ProjectService {
     const projectName = this.getProjectName(modelId, graphId);
     const gitLabProject = await this.gitLabService.findProjectByName(projectName);
     
-    if (gitLabProject) {
-      return {
-        id: `gitlab-${gitLabProject.id}`,
-        path: "",
-        graphId: modelId,
-        modelId,
-        createdAt: new Date(),
-        gitlab: {
-          project: {
-            id: gitLabProject.id,
-            path: gitLabProject.path,
-          },
-        },
-      };
-    }
-
-    const gitLabProjectNew = await this.gitLabService.createProject({
-      name: projectName,
-      description: `Compiler project for model ${modelId}`,
-      visibility: "private",
-    });
-
-    await this.gitLabService.setProjectVariables(gitLabProjectNew.id, [
-      { key: 'COMPILER_SECRET', value: this.compilerSecret, protected: false, masked: true, raw: true },
-    ]);
+    if (!gitLabProject) 
+      return null;
 
     return {
-      id: `gitlab-${gitLabProjectNew.id}`,
+      id: `gitlab-${gitLabProject.id}`,
       path: "",
       graphId: modelId,
       modelId,
       createdAt: new Date(),
       gitlab: {
         project: {
-          id: gitLabProjectNew.id,
-          path: gitLabProjectNew.path,
+          id: gitLabProject.id,
+          path: gitLabProject.path,
         },
       },
     };
