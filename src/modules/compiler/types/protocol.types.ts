@@ -8,18 +8,18 @@ export type HTTPType = {
   method: string;
   url: string;
   format: string;
-  headers: string;
-  params: string;
-  body: string;
+  headers: string | null;
+  params: string | null;
+  body: string | null;
   secure: boolean;
 }
 
 export type WSType = {
   id: number;
   url: string;
-  query: string;
-  auth: string;
-  event: string;
+  query: string | null;
+  auth: string | null;
+  event: string | null;
   secure: boolean;
 }
 

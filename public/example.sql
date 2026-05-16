@@ -335,11 +335,11 @@ $ENV$,
      false, v_proto_messages_id),
 
     ('POST',
-     'https://openrouter.ai/api/v1/chat/completions',
+     '''https://openrouter.ai/api/v1/chat/completions''',
      'json',
      E'{ ''Authorization'': ''Bearer '' + env[''OPENROUTER_KEY''], ''Content-Type'': ''application/json'' }',
      '{}',
-     E'JSON.stringify({ model: ''deepseek/deepseek-v4-flash:free'', messages: [{ role: ''system'', content: ''Ты производственный аналитик. Отвечай кратко и по делу.'' }, { role: ''user'', content: ''Вопрос: '' + String((env[''MSG_TEXT''] as string)?.replace(''/gpt'', '''')trim() || '''') + ''\nКонтекст: '' + String(env[''FETCH_CONTEXT''] || '''') }] })',
+     E'JSON.stringify({ model: ''deepseek/deepseek-v4-flash:free'', messages: [{ role: ''system'', content: ''Ты производственный аналитик. Отвечай кратко и по делу.'' }, { role: ''user'', content: ''Вопрос: '' + String((env[''MSG_TEXT''] as string)?.replace(''/gpt'', '''').trim() || '''') + '' Контекст: '' + String(env[''FETCH_CONTEXT''] || '''') }] })',
      true, v_proto_llm_id);
 
   -- ============================================================
@@ -421,29 +421,29 @@ $ENV$,
   -- ============================================================
   -- 10. Function data (4 штуки: SaveToken, ExtractLastMsg, FetchContext, SendReply)
   -- ============================================================
-  INSERT INTO "function" (name, body, args, node_id) VALUES
+  INSERT INTO "function" (name, body, node_id) VALUES
     ('saveToken',
      E'env[''BACKEND_TOKEN''] = (input as any).accessToken; return input;',
-     '', v_node_saveToken_id),
+     v_node_saveToken_id),
 
     ('extractLastMsg',
      E'const list = (input as any)?.data?.messages || []; const last = list[list.length - 1] || {}; env[''CHAT_ID''] = last?.chat?.id || (input as any)?.chatId; env[''WS_EVENT''] = { chatId: env[''CHAT_ID''], data: last }; env[''LAST_MESSAGE''] = last; return last;',
-     '', v_node_extractLastMsg_id),
+     v_node_extractLastMsg_id),
 
     ('fetchContext',
      E'const response = await fetch(''https://jsonplaceholder.typicode.com/posts/1''); const data = await response.json(); env[''FETCH_CONTEXT''] = data; return data;',
-     '', v_node_fetchContext_id),
+     v_node_fetchContext_id),
 
     ('sendReply',
      E'const chatId = (env[''WS_EVENT''] as any)?.chatId; const llmResponse = input as any; const answer = llmResponse.choices?.[0]?.message?.content || String(input); const response = await fetch(String(env[''BACKEND_URL'']) + ''/member/chats/'' + chatId + ''/messages'', { method: ''POST'', headers: { ''Authorization'': ''Bearer '' + env[''BACKEND_TOKEN''], ''Content-Type'': ''application/json'' }, body: JSON.stringify({ text: answer }) }); if (!response.ok) throw new Error(''Send failed: '' + response.status); return await response.json();',
-     '', v_node_sendReply_id);
+     v_node_sendReply_id);
 
   -- ============================================================
   -- 11. Condition data (1 штука: CheckTrigger)
   -- ============================================================
   INSERT INTO condition (expression, node_id) VALUES
     (
-     E'const msg = input as any; const text = msg?.text || ''''''; env[''MSG_TEXT''] = text; return text.includes(''/gpt'');',
+     E'const msg = input as any; const text = msg?.text || ''''; env[''MSG_TEXT''] = text; return text.includes(''/gpt'');',
      v_node_checkTrigger_id);
 
   -- ============================================================
@@ -480,7 +480,7 @@ $ENV$,
     (v_node_askLLM_id,     v_node_sendReply_id),
     (v_node_sendReply_id,  v_node_saveHistory_id);
 
-  RAISE NOTICE '✅ Model %, Graph % created with full permission structure', v_model_id, v_graph_id;
+  RAISE NOTICE 'Model %, Graph % created with full permission structure', v_model_id, v_graph_id;
 END $$;
 
 -- ============================================================

@@ -175,7 +175,7 @@ describe('CodegenService', () => {
     const result = codegen.generate(request, graph);
 
     // Engine should have empty children array for self-managed WS node
-    expect(result.engine.content).toContain('[10, { id: 10, kind: \'api\', fn: node_10, children: [] }]');
+    expect(result.engine.content).toContain('[10, { id: 10, kind: \'api\', fn: node_10 as unknown as (input: unknown, env: Record<string, unknown>) => Promise<unknown>, children: [] }]');
     // Node file should contain runChildren helper and socket.io-client dynamic import
     const wsFile = result.nodes.find((n) => n.id === 10);
     expect(wsFile?.content).toContain("await import('socket.io-client')");

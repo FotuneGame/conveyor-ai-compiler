@@ -15,13 +15,11 @@ export type FunctionType = {
   id: number;
   name: string;
   body: string;
-  args: string;
 }
 
 export type CallType = {
   id: number;
   name: string;
-  args: string;
 }
 
 export type TimerType = {

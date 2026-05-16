@@ -54,14 +54,14 @@ export class CodegenService {
     return childIds.map((id) => `import { node_${id} } from './node_${id}';`).join('\n');
   }
 
-  private generateRunChildrenHelper(node: NodeWithLinesType): string {
+  private generateRunChildrenHelper(node: NodeWithLinesType, exitType: string): string {
     const childIds = this.getChildIds(node);
     if (childIds.length === 0) {
-      return `const runChildren = async (data: unknown): Promise<unknown> => data;`;
+      return `const runChildren = async (data: ${exitType}): Promise<unknown> => data;`;
     }
     return [
-      `const runChildren = async (data: unknown): Promise<unknown> => {`,
-      `  let result = data;`,
+      `const runChildren = async (data: ${exitType}): Promise<unknown> => {`,
+      `  let result: any = data;`,
       ...childIds.map((id) => `  result = await node_${id}(result, env);`),
       `  return result;`,
       `};`,
@@ -73,7 +73,7 @@ export class CodegenService {
     const exitType = this.sanitizeTypeName(node.exitDataType?.name || 'unknown');
     const isSelfManaged = this.isSelfManaged(node);
     const childImports = isSelfManaged ? this.generateChildImports(node) : '';
-    const runChildren = isSelfManaged ? this.generateRunChildrenHelper(node) : '';
+    const runChildren = isSelfManaged ? this.generateRunChildrenHelper(node, exitType) : '';
 
     const body = this.generateNodeBody(node, enterType, exitType, isSelfManaged);
 
@@ -134,23 +134,23 @@ export class CodegenService {
 
   private ensureReturn(code: string): string {
     const trimmed = code.trim();
-    if (/^\s*return\s+/m.test(trimmed)) {
+    // Check only the start of the entire code, not each line
+    if (/^\s*return\s+/.test(trimmed)) {
       return trimmed;
+    }
+    // Multi-statement code (declarations or semicolons) needs IIFE wrapper
+    if (/^\s*(const|let|var)\s+/.test(trimmed) || /;\s*\S/.test(trimmed)) {
+      // Use async IIFE if code contains await
+      if (/\bawait\b/.test(trimmed)) {
+        return `return (async () => { ${trimmed} })();`;
+      }
+      return `return (() => { ${trimmed} })();`;
     }
     return `return ${trimmed};`;
   }
 
   private generateFunctionNode(fn: FunctionType, exitType: string): string {
-    const argsCode = fn.args || '';
-    const bodyCode = this.ensureReturn(fn.body || `return input as ${exitType};`);
-
-    if (argsCode.trim()) {
-      return [
-        `const { ${argsCode} } = input as unknown;`,
-        bodyCode,
-      ].join('\n  ');
-    }
-    return bodyCode;
+    return this.ensureReturn(fn.body || `return input as ${exitType};`);
   }
 
   private generateApiNode(api: APIType, exitType: string, isSelfManaged: boolean): string {
@@ -174,13 +174,13 @@ export class CodegenService {
     const paramsCode = http.params || '{}';
 
     return [
-      `const url = new URL('${url}');`,
+      `const url = new URL(${url});`,
       `const params = ${paramsCode};`,
       `Object.entries(params).forEach(([k, v]) => url.searchParams.append(k, String(v)));`,
       `const response = await fetch(url.toString(), {`,
       `  method: '${http.method}',`,
       `  headers: ${headersCode},`,
-      `  body: ${bodyCode} !== undefined ? JSON.stringify(${bodyCode}) : undefined,`,
+      `  body: ${bodyCode},`,
       `});`,
       `if (!response.ok) {`,
       `  throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);`,
@@ -201,9 +201,9 @@ export class CodegenService {
       `const { io } = await import('socket.io-client');`,
       `const query = ${ws.query || '{}'};`,
       `const auth = ${ws.auth || '{}'};`,
-      `const client = io('${url}', { query, auth, transports: ['websocket', 'polling'] });`,
+      `const client = io(${url}, { query, auth, transports: ['websocket', 'polling'] });`,
       `const result = await new Promise((resolve, reject) => {`,
-      `  client.once('${ws.event || 'message'}', async (data) => {`,
+      `  client.once('${ws.event || 'message'}', async (data: ${exitType}) => {`,
       `    try {`,
       `      const childResult = await runChildren(data);`,
       `      resolve(childResult);`,
@@ -228,7 +228,7 @@ export class CodegenService {
     const body = http?.body || `JSON.stringify({ prompt: ${JSON.stringify(llm.prompt)}, temperature: ${llm.temperature}, context: ${JSON.stringify(llm.context)}, max_tokens: ${llm.size} })`;
 
     return [
-      `const response = await fetch('${url}', {`,
+      `const response = await fetch(${url}, {`,
       `  method: '${method}',`,
       `  headers: ${headers},`,
       `  body: ${body},`,
@@ -286,6 +286,7 @@ export class CodegenService {
   }
 
   private generateMemoryNode(memory: MemoryType, exitType: string, nodeId: number): string {
+    const maxSize = memory.maxSize ?? 0;
     return [
       `const filePath = join(process.cwd(), 'memory-node-${nodeId}.json');`,
       `let arr: unknown[] = [];`,
@@ -293,7 +294,7 @@ export class CodegenService {
       `  arr = JSON.parse(readFileSync(filePath, 'utf-8'));`,
       `}`,
       `arr.push(input);`,
-      `if (${memory.maxSize ?? 'null'} && arr.length > ${memory.maxSize ?? 0}) {`,
+      `if (${maxSize > 0 ? 'true' : 'false'} && arr.length > ${maxSize}) {`,
       `  arr.shift();`,
       `}`,
       `writeFileSync(filePath, JSON.stringify(arr, null, 2));`,
@@ -305,7 +306,7 @@ export class CodegenService {
     return [
       `const fn = (env.__functions as Map<string, Function>)?.get('${call.name}');`,
       `if (typeof fn === 'function') {`,
-      `  return await fn(${call.args || 'input'}, env);`,
+      `  return await fn(input, env);`,
       `}`,
       `return input as ${exitType};`,
     ].join('\n  ');
@@ -320,7 +321,7 @@ export class CodegenService {
       .map((n) => {
         const isSelf = this.isSelfManaged(n.node);
         const kind = this.sanitizeIdentifier(n.node.type?.name ?? 'default');
-        return `  [${n.id}, { id: ${n.id}, kind: '${kind}', fn: node_${n.id}, children: [${isSelf ? '' : n.children.join(', ')}] }]`;
+        return `  [${n.id}, { id: ${n.id}, kind: '${kind}', fn: node_${n.id} as unknown as (input: unknown, env: Record<string, unknown>) => Promise<unknown>, children: [${isSelf ? '' : n.children.join(', ')}] }]`;
       })
       .join(',\n');
 
@@ -397,7 +398,7 @@ export class CodegenService {
 
     const functionMapEntries = nodes
       .filter((n) => n.function && n.function.name)
-      .map((n) => `  ['${n.function!.name}', node_${n.id}]`)
+      .map((n) => `  ['${n.function!.name}', node_${n.id} as unknown as Function]`)
       .join(',\n');
 
     return [
@@ -432,7 +433,7 @@ export class CodegenService {
       `    });`,
       ``,
       `    this.app.get('/logs', (req: Request, res: Response) => {`,
-      `      res.json({ logs: [], model: '${modelName}', graphId: process.env.GRAPH_ID });`,
+      `      res.json({ logs: [], model: ${JSON.stringify(modelName)}, graphId: process.env.GRAPH_ID });`,
       `    });`,
       ``,
       `    this.app.get('/api/nodes', (req: Request, res: Response) => {`,
@@ -480,7 +481,9 @@ export class CodegenService {
 
   private sanitizeTypeName(name: string | undefined): string {
     if (!name) return 'unknown';
-    return name.replace(/[^a-zA-Z0-9_]/g, '_');
+    const sanitized = name.replace(/[^a-zA-Z0-9_]/g, '_');
+    const reserved = ['void', 'any', 'never', 'unknown', 'string', 'number', 'boolean', 'symbol', 'bigint', 'object', 'null', 'undefined', 'true', 'false'];
+    return reserved.includes(sanitized) ? `T_${sanitized}` : sanitized;
   }
 
   private sanitizeIdentifier(name: string | undefined): string {

@@ -65,8 +65,7 @@ export const functionNode: NodeWithLinesType = {
   function: {
     id: 1,
     name: 'testFn',
-    body: 'return x + 1;',
-    args: 'x',
+    body: 'return (input as number) + 1;',
   },
 };
 
@@ -169,7 +168,6 @@ export const callNode: NodeWithLinesType = {
   call: {
     id: 1,
     name: 'otherFunction',
-    args: 'input',
   },
 };
 
