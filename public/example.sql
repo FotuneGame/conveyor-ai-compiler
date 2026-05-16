@@ -5,7 +5,7 @@
 -- 1. Открой этот файл в редакторе
 -- 2. Замени OWNER_ID на ID существующего пользователя
 -- 3. Запусти: psql -U postgres -d conveyor -f example.sql
--- 4. Проверьте что example.env такое же как и в graph поле env
+-- 4. Проверьте что example.env такое же как и в graph поле env + OPENROUTER_KEY
 --
 -- ПАРАМЕТРЫ:
 --   OWNER_ID       — ID пользователя (должен существовать в таблице "user")
@@ -253,6 +253,7 @@ BACKEND_URL=http://localhost:5000
 BACKEND_EMAIL_BOT=example@gmail.com
 BACKEND_PASSWORD_BOT=12345678
 BACKEND_SERVICE_SECRET=test-service-secret
+OPENROUTER_KEY=your-key
 $ENV$,
     v_model_id,
     (SELECT id FROM compiler WHERE name = v_compiler_name LIMIT 1)
