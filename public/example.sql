@@ -339,7 +339,7 @@ $ENV$,
      'json',
      E'{ ''Authorization'': ''Bearer '' + env[''OPENROUTER_KEY''], ''Content-Type'': ''application/json'' }',
      '{}',
-     E'JSON.stringify({ model: ''openai/gpt-4o-mini'', messages: [{ role: ''system'', content: ''Ты производственный аналитик. Отвечай кратко и по делу.'' }, { role: ''user'', content: ''Вопрос: '' + String((env[''MSG_TEXT''] as string)?.replace(''/gpt'', '''')trim() || '''') + ''\nКонтекст: '' + String(env[''FETCH_CONTEXT''] || '''') }] })',
+     E'JSON.stringify({ model: ''deepseek/deepseek-v4-flash:free'', messages: [{ role: ''system'', content: ''Ты производственный аналитик. Отвечай кратко и по делу.'' }, { role: ''user'', content: ''Вопрос: '' + String((env[''MSG_TEXT''] as string)?.replace(''/gpt'', '''')trim() || '''') + ''\nКонтекст: '' + String(env[''FETCH_CONTEXT''] || '''') }] })',
      true, v_proto_llm_id);
 
   -- ============================================================
